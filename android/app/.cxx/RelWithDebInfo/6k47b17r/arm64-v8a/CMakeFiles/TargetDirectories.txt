@@ -1,0 +1,2 @@
+C:/Users/Client/Desktop/B-callio/android/app/.cxx/RelWithDebInfo/6k47b17r/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/Client/Desktop/B-callio/android/app/.cxx/RelWithDebInfo/6k47b17r/arm64-v8a/CMakeFiles/rebuild_cache.dir

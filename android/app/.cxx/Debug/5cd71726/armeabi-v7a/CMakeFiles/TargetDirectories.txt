@@ -1,0 +1,2 @@
+C:/Users/Elite Sport/Desktop/Mobile Projects/projects/bacalio/android/app/.cxx/Debug/5cd71726/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Users/Elite Sport/Desktop/Mobile Projects/projects/bacalio/android/app/.cxx/Debug/5cd71726/armeabi-v7a/CMakeFiles/rebuild_cache.dir

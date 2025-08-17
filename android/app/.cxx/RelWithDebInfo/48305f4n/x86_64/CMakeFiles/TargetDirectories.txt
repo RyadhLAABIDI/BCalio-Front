@@ -1,0 +1,2 @@
+C:/Users/Elite Sport/Desktop/Mobile Projects/projects/bacalio/android/app/.cxx/RelWithDebInfo/48305f4n/x86_64/CMakeFiles/edit_cache.dir
+C:/Users/Elite Sport/Desktop/Mobile Projects/projects/bacalio/android/app/.cxx/RelWithDebInfo/48305f4n/x86_64/CMakeFiles/rebuild_cache.dir
