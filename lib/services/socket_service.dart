@@ -6,7 +6,7 @@ class SocketService {
   static SocketService? _instance;
 
   /// ⚠️ Corrigé : pas d'espace dans l'URL par défaut
-  factory SocketService({String baseUrl = 'http://192.168.1.25:1906'}) {
+  factory SocketService({String baseUrl = 'http://192.168.1.26:1906'}) {
     return _instance ??= SocketService._internal(baseUrl);
   }
   SocketService._internal(this.baseUrl);

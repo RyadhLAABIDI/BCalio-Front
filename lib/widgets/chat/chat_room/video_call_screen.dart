@@ -26,6 +26,9 @@ class VideoCallScreen extends StatefulWidget {
   final bool isGroup;
   final List<String>? memberIds; // sans moi
 
+  // 👇 nouveau flag
+  final bool shouldSendLocalAccept;
+
   const VideoCallScreen({
     super.key,
     required this.name,
@@ -37,6 +40,7 @@ class VideoCallScreen extends StatefulWidget {
     required this.existingCallId,
     this.isGroup = false,
     this.memberIds,
+    this.shouldSendLocalAccept = false, // 👈 default
   });
 
   @override
@@ -50,7 +54,9 @@ class _VideoCallScreenState extends State<VideoCallScreen>
        _camOn     = true,
        _speakerOn = false,
        _show      = true,
-       _sent      = false;
+       _sent      = false;       // pour l’appelant
+
+  bool _acceptSent = false;      // 👈 pour le destinataire
 
   late final AnimationController _anim;
   late final Animation<double>   _scale;
@@ -86,7 +92,7 @@ class _VideoCallScreenState extends State<VideoCallScreen>
     if (_isGroup && widget.isCaller) {
       _rtc.onUiParticipantJoined = (uid, name) =>
           _toast('${name.isNotEmpty ? name : uid} a rejoint l’appel');
-      _rtc.onUiParticipantTimeout = (_) {}; // pas de toast timeout individuel
+      _rtc.onUiParticipantTimeout = (_) {};
     }
 
     final sock = me.socketService;
@@ -123,10 +129,10 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       if (!_isGroup) {
         _rtc.addPeer(widget.recipientID, widget.name, initiator: false);
       }
-      // pas de log accepted ici
     }
 
-    sock
+    // === listeners AVANT tout accept local ===
+    final s = sock
       ..onCallAccepted = (cid) {
         _fallbackTimeout?.cancel();
         CallSounds.stopRingBack();
@@ -173,6 +179,13 @@ class _VideoCallScreenState extends State<VideoCallScreen>
         _finishAfterBeep(() => CallSounds.playEndBeep());
         _log(CallStatus.timeout);
       };
+
+    // 👇 après enregistrement des listeners : envoyer l'ACCEPT côté destinataire
+    if (!widget.isCaller && widget.shouldSendLocalAccept && !_acceptSent) {
+      _acceptSent = true;
+      final idToAccept = widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
+      s.acceptCall(idToAccept, widget.userId);
+    }
 
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_start != null && mounted) setState(() {});

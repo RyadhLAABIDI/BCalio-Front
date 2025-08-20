@@ -25,6 +25,9 @@ class AudioCallScreen extends StatefulWidget {
   final bool isGroup;
   final List<String>? memberIds; // sans moi
 
+  // 👇 nouveau flag pour gérer l’accept côté destinataire
+  final bool shouldSendLocalAccept;
+
   const AudioCallScreen({
     super.key,
     required this.name,
@@ -36,6 +39,7 @@ class AudioCallScreen extends StatefulWidget {
     required this.existingCallId,
     this.isGroup = false,
     this.memberIds,
+    this.shouldSendLocalAccept = false, // 👈 default
   });
 
   @override
@@ -48,7 +52,8 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   bool _micOn      = true;
   bool _speakerOn  = true;
   bool _show       = true;
-  bool _sent       = false;
+  bool _sent       = false;        // pour l’appelant
+  bool _acceptSent = false;        // 👈 pour le destinataire
 
   late final AnimationController _anim;
   late final Animation<double>   _scale;
@@ -84,7 +89,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     if (_isGroup && widget.isCaller) {
       _rtc.onUiParticipantJoined = (uid, name) =>
           _toast('${name.isNotEmpty ? name : uid} a rejoint l’appel');
-      _rtc.onUiParticipantTimeout = (_) {}; // pas de toast "n’a pas répondu"
+      _rtc.onUiParticipantTimeout = (_) {};
     }
 
     final sock = me.socketService;
@@ -115,16 +120,16 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       });
     }
 
-    // DESTINATAIRE : prépare la vue, compteur démarre quand "call-accepted"
+    // DESTINATAIRE : prépare la vue; compteur démarre quand "call-accepted"
     if (!widget.isCaller && widget.existingCallId != null) {
       _callId = widget.existingCallId;
       _start  = null;
       if (!_isGroup) {
         _rtc.addPeer(widget.recipientID, widget.name, initiator: false);
       }
-      // (pas de log accepted ici)
     }
 
+    // === listeners AVANT tout accept local ===
     sock.onCallAccepted = (cid) {
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
@@ -176,6 +181,13 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.timeout);
     };
+
+    // 👇 après enregistrement des listeners : envoyer l'ACCEPT côté destinataire
+    if (!widget.isCaller && widget.shouldSendLocalAccept && !_acceptSent) {
+      _acceptSent = true;
+      final idToAccept = widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
+      sock.acceptCall(idToAccept, widget.userId);
+    }
 
     rtc.Helper.setSpeakerphoneOn(true);
 

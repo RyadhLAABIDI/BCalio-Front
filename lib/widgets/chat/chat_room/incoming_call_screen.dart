@@ -87,7 +87,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sock    = Get.find<UserController>().socketService;
     final isVideo = widget.callType == 'video';
 
     return Scaffold(
@@ -158,9 +157,11 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                         await _platform.invokeMethod('ui_accept', {'callId': widget.callId});
                       } catch (_) {}
 
-                      // pas de log ici — l’écran d’appel loggue "accepted" sur event
-                      sock.acceptCall(widget.callId, widget.recipientID);
+                      // ⚠️ NE PLUS envoyer accept ici (race condition)
+                      // sock.acceptCall(widget.callId, widget.recipientID);
 
+                      // → On ouvre l’écran d’appel et on lui demande d’envoyer l’accept APRÈS
+                      // que ses listeners soient enregistrés.
                       Get.off(() => isVideo
                           ? VideoCallScreen(
                               name:          widget.callerName,
@@ -172,6 +173,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                               existingCallId: widget.callId,
                               isGroup:       widget.isGroup,
                               memberIds:     widget.members,
+                              shouldSendLocalAccept: true, // 👈
                             )
                           : AudioCallScreen(
                               name:          widget.callerName,
@@ -183,6 +185,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                               existingCallId: widget.callId,
                               isGroup:       widget.isGroup,
                               memberIds:     widget.members,
+                              shouldSendLocalAccept: true, // 👈
                             ));
                     },
                   ),
@@ -210,6 +213,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                         });
                       } catch (_) {}
 
+                      final sock = Get.find<UserController>().socketService;
                       sock.rejectCall(widget.callId, widget.recipientID);
                       Get.back();
                     },

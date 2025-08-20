@@ -114,8 +114,8 @@ class _ChatRoomAppBarState extends State<ChatRoomAppBar>
       );
     };
 
-    sock.onCallError = (e) => Get.snackbar('Call error', e,
-        backgroundColor: Colors.red, colorText: Colors.white);
+    // 🔇 suppression définitive de la snackbar "Invalid call" / "Call error"
+    sock.onCallError = (e) { debugPrint('[call] error suppressed: $e'); };
 
     // 🔔 demander la présence initiale des membres de cette conversation
     final uc = Get.find<UserController>();

@@ -17,11 +17,11 @@ class UserController extends GetxController {
   late final SocketService socketService;
 
   // ⬅️ FIX: enlever l'espace après http://
-  static const String pushBaseUrl = 'http://192.168.1.25:1906';
+  static const String pushBaseUrl = 'http://192.168.1.26:1906';
 
   UserController({required this.userApiService})
       // ⬅️ FIX: enlever l'espace ici aussi
-      : socketService = SocketService(baseUrl: 'http://192.168.1.25:1906');
+      : socketService = SocketService(baseUrl: 'http://192.168.1.26:1906');
 
   // ------- état utilisateur courant -------
   final Rx<User?> _currentUser = Rx<User?>(null);

@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.media.AudioAttributes;
+import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
@@ -103,14 +104,18 @@ public class MainActivity extends FlutterActivity {
         for (Bundle b : copy) deliverToFlutter(b);
     }
 
+    /* ======== Sonnerie native pour le destinataire (MethodChannel 'call_sounds') ======== */
+    private static Ringtone sIncomingTone;
+
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
+
+        // Canal pour les événements d'appel entrant -> Flutter
         channel = new MethodChannel(
                 flutterEngine.getDartExecutor().getBinaryMessenger(),
                 CHANNEL
         );
-
         channel.setMethodCallHandler(new MethodChannel.MethodCallHandler() {
             @Override
             @SuppressWarnings("unchecked")
@@ -138,12 +143,12 @@ public class MainActivity extends FlutterActivity {
                     return;
                 }
 
-                // 👉 actions déclenchées depuis l’UI Flutter
+                // Actions UI (depuis l’écran Flutter)
                 if ("ui_accept".equals(call.method)) {
                     try {
                         Map<String, Object> m = (Map<String, Object>) call.arguments;
                         String callId = safeStr(m.get("callId"));
-                        cancelIncomingById(MainActivity.this, callId); // stop timer + dismiss notif
+                        cancelIncomingById(MainActivity.this, callId);
                         result.success(true);
                     } catch (Exception e) {
                         result.error("ERR", e.getMessage(), null);
@@ -160,7 +165,7 @@ public class MainActivity extends FlutterActivity {
                         b.putString("callerName", safeStr(m.get("callerName")));
                         b.putString("avatarUrl",  safeStr(m.get("avatarUrl")));
 
-                        // On continue d'utiliser le receiver pour l'affichage "Appel refusé"
+                        // On conserve l’affichage "Appel refusé" via le receiver
                         Intent br = new Intent(MainActivity.this, CallActionReceiver.class)
                                 .setAction(MyFirebaseMessagingService.ACTION_REJECT)
                                 .putExtras(b);
@@ -185,6 +190,50 @@ public class MainActivity extends FlutterActivity {
                 }
 
                 result.notImplemented();
+            }
+        });
+
+        // Canal pour JOUER/STOPPER la **vraie sonnerie téléphone** côté destinataire
+        MethodChannel callSounds = new MethodChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(),
+                "call_sounds"
+        );
+        callSounds.setMethodCallHandler((call, result) -> {
+            try {
+                if ("playIncoming".equals(call.method)) {
+                    try {
+                        if (sIncomingTone != null) {
+                            try { sIncomingTone.stop(); } catch (Exception ignored) {}
+                            sIncomingTone = null;
+                        }
+                        Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+                        sIncomingTone = RingtoneManager.getRingtone(getApplicationContext(), ringUri);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            sIncomingTone.setAudioAttributes(
+                                    new AudioAttributes.Builder()
+                                            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                            .build()
+                            );
+                        }
+                        sIncomingTone.play();
+                    } catch (Exception ignored) {}
+                    result.success(true);
+                    return;
+                }
+                if ("stopIncoming".equals(call.method)) {
+                    try {
+                        if (sIncomingTone != null) {
+                            sIncomingTone.stop();
+                            sIncomingTone = null;
+                        }
+                    } catch (Exception ignored) {}
+                    result.success(true);
+                    return;
+                }
+                result.notImplemented();
+            } catch (Exception e) {
+                result.error("ERR", e.getMessage(), null);
             }
         });
 
@@ -292,7 +341,7 @@ public class MainActivity extends FlutterActivity {
         inCall.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         inCall.putExtras(b);
 
-        // Full screen & tap => IMMUTABLE
+        // Full screen & tap => ouvre l’écran d’appel entrant
         PendingIntent fsPending = PendingIntent.getActivity(
                 activity,
                 (callId.hashCode() ^ (1 * 31)),
@@ -310,33 +359,6 @@ public class MainActivity extends FlutterActivity {
                         : PendingIntent.FLAG_UPDATE_CURRENT
         );
 
-        // ✅ Actions => ouvrir IncomingCallActivity avec autoAccept/autoReject
-        Intent accept = new Intent(activity, IncomingCallActivity.class)
-                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                .putExtras(b);
-        accept.putExtra("autoAccept", true);
-        PendingIntent acceptPI = PendingIntent.getActivity(
-                activity,
-                (callId.hashCode() ^ (10 * 31)),
-                accept,
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                        ? (PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)
-                        : PendingIntent.FLAG_UPDATE_CURRENT
-        );
-
-        Intent reject = new Intent(activity, IncomingCallActivity.class)
-                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                .putExtras(b);
-        reject.putExtra("autoReject", true);
-        PendingIntent rejectPI = PendingIntent.getActivity(
-                activity,
-                (callId.hashCode() ^ (20 * 31)),
-                reject,
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                        ? (PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)
-                        : PendingIntent.FLAG_UPDATE_CURRENT
-        );
-
         NotificationCompat.Builder nb = new NotificationCompat.Builder(activity, CALLS_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                 .setContentTitle("Appel entrant")
@@ -347,11 +369,7 @@ public class MainActivity extends FlutterActivity {
                 .setAutoCancel(false)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setFullScreenIntent(fsPending, true)
-                .setContentIntent(tapPending)
-                .addAction(new NotificationCompat.Action(
-                        android.R.drawable.ic_menu_call, "ACCEPTER", acceptPI))
-                .addAction(new NotificationCompat.Action(
-                        android.R.drawable.ic_menu_close_clear_cancel, "REFUSER", rejectPI));
+                .setContentIntent(tapPending);
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
