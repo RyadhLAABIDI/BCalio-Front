@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:bcalio/widgets/chat/chat_room/call_sounds.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:slide_to_act/slide_to_act.dart';
-import 'package:flutter/services.dart'; // 👈 pour ui_accept / ui_reject
+import 'package:flutter/services.dart'; // 👈 pour ui_accept / ui_reject / ui_timeout
 
 import '../../../controllers/user_controller.dart';
 import 'audio_call_screen.dart';
@@ -42,27 +44,61 @@ class IncomingCallScreen extends StatefulWidget {
 
 class _IncomingCallScreenState extends State<IncomingCallScreen> {
   static const _platform = MethodChannel('incoming_calls'); // 👈
+  static const Duration _uiRingTimeout = Duration(seconds: 32); // ≈ côté A (32s)
+
+  // 👇 nouveau: timer + garde-fou pour ne fermer qu’une fois
+  Timer? _autoDismiss;
+  bool   _closed = false;
 
   @override
   void initState() {
     super.initState();
+
     // ▶️ sonnerie d’appel entrant
     CallSounds.playIncoming();
 
-    // auto-fermeture si l’appelant annule / termine / timeout
+    // ⏱️ Fallback local: si aucun event serveur ne ferme l’écran → auto-close
+    _autoDismiss?.cancel();
+    _autoDismiss = Timer(_uiRingTimeout, () async {
+      if (!mounted || _closed) return;
+      try {
+        // informe le canal natif (si notif plein écran côté Android)
+        await _platform.invokeMethod('ui_timeout', {'callId': widget.callId});
+      } catch (_) {}
+      await _log(CallStatus.missed);
+      _close();
+    });
+
+    // auto-fermeture si l’appelant annule / termine / timeout (événements socket)
     final sock = Get.find<UserController>().socketService;
-    void _close() {
-      CallSounds.stopIncoming();
-      if (mounted) Get.back();
-    }
     sock
-      ..onCallCancelled = () { _log(CallStatus.cancelled); _close(); }
-      ..onCallEnded     = () { _log(CallStatus.missed);    _close(); }
-      ..onCallTimeout   = () { _log(CallStatus.missed);    _close(); };
+      ..onCallCancelled = () { _onRemoteEnd(CallStatus.cancelled); }
+      ..onCallEnded     = () { _onRemoteEnd(CallStatus.missed); }
+      ..onCallTimeout   = () { _onRemoteEnd(CallStatus.missed); };
+  }
+
+  void _onRemoteEnd(CallStatus status) async {
+    if (_closed) return;
+    await _log(status);
+    _close();
+  }
+
+  void _cancelLocalTimer() {
+    _autoDismiss?.cancel();
+    _autoDismiss = null;
+  }
+
+  void _close() {
+    if (_closed) return;
+    _closed = true;
+    _cancelLocalTimer();
+    CallSounds.stopIncoming();
+    if (mounted) Get.back();
   }
 
   @override
   void dispose() {
+    _cancelLocalTimer();
     CallSounds.stopIncoming();
     super.dispose();
   }
@@ -150,18 +186,15 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                     borderRadius: 40,
                     sliderButtonIcon: const Icon(Iconsax.arrow_up, color: Colors.white, size: 28),
                     onSubmit: () async {
+                      // stop les timers / sons avant de naviguer
+                      _cancelLocalTimer();
                       CallSounds.stopIncoming();
 
-                      // 👉 annule le timer + la notif “ringing” côté Android
                       try {
                         await _platform.invokeMethod('ui_accept', {'callId': widget.callId});
                       } catch (_) {}
 
-                      // ⚠️ NE PLUS envoyer accept ici (race condition)
-                      // sock.acceptCall(widget.callId, widget.recipientID);
-
-                      // → On ouvre l’écran d’appel et on lui demande d’envoyer l’accept APRÈS
-                      // que ses listeners soient enregistrés.
+                      // ⚠️ ne pas envoyer accept ici (race condition) — on laisse l’écran d’appel l’envoyer
                       Get.off(() => isVideo
                           ? VideoCallScreen(
                               name:          widget.callerName,
@@ -173,7 +206,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                               existingCallId: widget.callId,
                               isGroup:       widget.isGroup,
                               memberIds:     widget.members,
-                              shouldSendLocalAccept: true, // 👈
+                              shouldSendLocalAccept: true,
                             )
                           : AudioCallScreen(
                               name:          widget.callerName,
@@ -185,7 +218,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                               existingCallId: widget.callId,
                               isGroup:       widget.isGroup,
                               memberIds:     widget.members,
-                              shouldSendLocalAccept: true, // 👈
+                              shouldSendLocalAccept: true,
                             ));
                     },
                   ),
@@ -200,10 +233,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                     borderRadius: 40,
                     sliderButtonIcon: const Icon(Iconsax.arrow_up, color: Colors.white, size: 28),
                     onSubmit: () async {
+                      _cancelLocalTimer();
                       CallSounds.stopIncoming();
-                      _log(CallStatus.rejected);
+                      await _log(CallStatus.rejected);
 
-                      // 👉 aligne la notif avec l’action UI ("Appel refusé")
                       try {
                         await _platform.invokeMethod('ui_reject', {
                           'callId'    : widget.callId,
@@ -215,7 +248,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
 
                       final sock = Get.find<UserController>().socketService;
                       sock.rejectCall(widget.callId, widget.recipientID);
-                      Get.back();
+                      _close();
                     },
                   ),
                 ],

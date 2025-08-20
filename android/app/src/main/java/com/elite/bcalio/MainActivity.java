@@ -8,6 +8,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.Ringtone;
@@ -19,6 +21,9 @@ import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -42,6 +47,24 @@ public class MainActivity extends FlutterActivity {
 
     private static volatile boolean inForeground = false;
     public static boolean isInForeground() { return inForeground; }
+
+    // ---- statut local pour bloquer les "manqués" tardifs ----
+    private static final String PREFS_CALLS = "bcalio_calls";
+    private static String KEY_STATUS(String callId) { return "s_" + callId; }
+    private static final String STATUS_ACCEPTED = "accepted";
+    private static final String STATUS_REJECTED = "rejected";
+
+    private static void markAccepted(Context ctx, String callId) {
+        if (callId == null || callId.isEmpty()) return;
+        ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_STATUS(callId), STATUS_ACCEPTED).apply();
+    }
+
+    private static void markRejected(Context ctx, String callId) {
+        if (callId == null || callId.isEmpty()) return;
+        ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_STATUS(callId), STATUS_REJECTED).apply();
+    }
 
     private static String extractCallId(Bundle b) {
         return b != null ? b.getString("callId", "") : "";
@@ -71,6 +94,7 @@ public class MainActivity extends FlutterActivity {
         args.put("members",    bundle.getString("members", "[]"));
         args.put("autoAccept", bundle.getBoolean("autoAccept", false));
         args.put("autoReject", bundle.getBoolean("autoReject", false));
+        args.put("callerPhone",bundle.getString("callerPhone","")); // 👈 NEW (utile si tu l’affiches côté Flutter)
 
         if (channel != null) {
             channel.invokeMethod("incoming_call", args);
@@ -124,14 +148,22 @@ public class MainActivity extends FlutterActivity {
                     try {
                         Map<String, Object> m = (Map<String, Object>) call.arguments;
                         Bundle b = new Bundle();
-                        b.putString("callId",     safeStr(m.get("callId")));
-                        b.putString("callerId",   safeStr(m.get("callerId")));
-                        b.putString("callerName", safeStr(m.get("callerName")));
-                        b.putString("callType",   safeStr(m.get("callType")));
-                        b.putString("avatarUrl",  safeStr(m.get("avatarUrl")));
+                        b.putString("callId",      safeStr(m.get("callId")));
+                        b.putString("callerId",    safeStr(m.get("callerId")));
+                        b.putString("callerName",  safeStr(m.get("callerName")));
+                        b.putString("callType",    safeStr(m.get("callType")));
+                        b.putString("avatarUrl",   safeStr(m.get("avatarUrl")));
+                        b.putString("callerPhone", safeStr(m.get("callerPhone"))); // 👈 NEW
                         b.putBoolean("isGroup",   "1".equals(safeStr(m.get("isGroup"))) || Boolean.TRUE.equals(m.get("isGroup")));
                         b.putString("members",    safeStr(m.get("members")));
                         b.putString("recipientID",safeStr(m.get("recipientID")));
+
+                        // si (par sécurité) on est déjà au 1er plan → ne pas afficher la notif
+                        if (MainActivity.isInForeground()) {
+                            enqueueIncomingCall(b);
+                            result.success(true);
+                            return;
+                        }
 
                         showIncomingCallNotification(MainActivity.this, b);
                         enqueueIncomingCall(b);
@@ -148,6 +180,9 @@ public class MainActivity extends FlutterActivity {
                     try {
                         Map<String, Object> m = (Map<String, Object>) call.arguments;
                         String callId = safeStr(m.get("callId"));
+                        // ✅ 1) marquer accepté pour bloquer "manqué" tardif
+                        markAccepted(MainActivity.this, callId);
+                        // ✅ 2) coupe timer + ferme notif
                         cancelIncomingById(MainActivity.this, callId);
                         result.success(true);
                     } catch (Exception e) {
@@ -159,17 +194,46 @@ public class MainActivity extends FlutterActivity {
                 if ("ui_reject".equals(call.method)) {
                     try {
                         Map<String, Object> m = (Map<String, Object>) call.arguments;
-                        Bundle b = new Bundle();
-                        b.putString("callId",     safeStr(m.get("callId")));
-                        b.putString("callerId",   safeStr(m.get("callerId")));
-                        b.putString("callerName", safeStr(m.get("callerName")));
-                        b.putString("avatarUrl",  safeStr(m.get("avatarUrl")));
+                        String callId = safeStr(m.get("callId"));
+                        String callerId = safeStr(m.get("callerId"));
+                        String callerName = safeStr(m.get("callerName"));
+                        String avatarUrl = safeStr(m.get("avatarUrl"));
+                        String callerPhone = safeStr(m.get("callerPhone")); // peut être vide
 
-                        // On conserve l’affichage "Appel refusé" via le receiver
-                        Intent br = new Intent(MainActivity.this, CallActionReceiver.class)
-                                .setAction(MyFirebaseMessagingService.ACTION_REJECT)
-                                .putExtras(b);
-                        sendBroadcast(br);
+                        // ✅ marquer rejeté (empêche "Appel manqué" via FCM ensuite)
+                        markRejected(MainActivity.this, callId);
+                        // ✅ coupe timer + ferme notif
+                        cancelIncomingById(MainActivity.this, callId);
+
+                        // 👉 Pas de notif "Appel refusé" quand on est dans l’app
+                        if (!MainActivity.isInForeground()) {
+                            Bundle b = new Bundle();
+                            b.putString("callId", callId);
+                            b.putString("callerId", callerId);
+                            b.putString("callerName", callerName);
+                            b.putString("avatarUrl", avatarUrl);
+                            b.putString("callerPhone", callerPhone); // 👈 NEW
+
+                            // On conserve l’affichage "Appel refusé" via le receiver (cas background)
+                            Intent br = new Intent(MainActivity.this, CallActionReceiver.class)
+                                    .setAction(MyFirebaseMessagingService.ACTION_REJECT)
+                                    .putExtras(b);
+                            sendBroadcast(br);
+                        }
+
+                        result.success(true);
+                    } catch (Exception e) {
+                        result.error("ERR", e.getMessage(), null);
+                    }
+                    return;
+                }
+
+                if ("ui_timeout".equals(call.method)) {
+                    // Fallback UI (B n’a pas répondu côté Flutter) → juste annuler notif/alarme
+                    try {
+                        Map<String, Object> m = (Map<String, Object>) call.arguments;
+                        String callId = safeStr(m.get("callId"));
+                        cancelIncomingById(MainActivity.this, callId);
                         result.success(true);
                     } catch (Exception e) {
                         result.error("ERR", e.getMessage(), null);
@@ -193,7 +257,7 @@ public class MainActivity extends FlutterActivity {
             }
         });
 
-        // Canal pour JOUER/STOPPER la **vraie sonnerie téléphone** côté destinataire
+        // Canal pour la sonnerie TEL côté destinataire
         MethodChannel callSounds = new MethodChannel(
                 flutterEngine.getDartExecutor().getBinaryMessenger(),
                 "call_sounds"
@@ -283,7 +347,7 @@ public class MainActivity extends FlutterActivity {
     }
 
     /** Annule le timer de timeout + la notification "ringing" pour ce callId. */
-    private static void cancelIncomingById(Context ctx, String callId) {
+    static void cancelIncomingById(Context ctx, String callId) {
         if (callId == null || callId.isEmpty()) return;
 
         // Annuler l'AlarmManager (ACTION_TIMEOUT)
@@ -330,12 +394,87 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
+    /** Charge un bitmap local UNIQUEMENT (content://, file://, /…) */
+    private static Bitmap tryLoadBitmapLocal(Context ctx, String uriOrPath) {
+        if (uriOrPath == null || uriOrPath.trim().isEmpty()) return null;
+        try {
+            if (uriOrPath.startsWith("content://")) {
+                Uri u = Uri.parse(uriOrPath);
+                try (InputStream is = ctx.getContentResolver().openInputStream(u)) {
+                    if (is != null) return BitmapFactory.decodeStream(is);
+                }
+                return null;
+            }
+            if (uriOrPath.startsWith("file://")) {
+                return BitmapFactory.decodeFile(Uri.parse(uriOrPath).getPath());
+            }
+            if (uriOrPath.startsWith("/")) {
+                return BitmapFactory.decodeFile(uriOrPath);
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    /** DL (simple) d’un bitmap distant http(s) */
+    private static Bitmap tryLoadBitmapRemote(String url) {
+        if (url == null || url.trim().isEmpty()) return null;
+        HttpURLConnection conn = null;
+        try {
+            URL u = new URL(url);
+            conn = (HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(2500);
+            conn.setReadTimeout(2500);
+            conn.connect();
+            if (conn.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                InputStream is = conn.getInputStream();
+                return BitmapFactory.decodeStream(is);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return null;
+    }
+
+    /** Pose le largeIcon (local immédiat) ou via MAJ asynchrone s’il est http(s) */
+    private static void applyLargeIconIfAny(Activity act, String avatarUrl, int notifId, NotificationCompat.Builder nb) {
+        if (avatarUrl == null || avatarUrl.trim().isEmpty()) return;
+
+        // local ?
+        Bitmap local = tryLoadBitmapLocal(act, avatarUrl);
+        if (local != null) {
+            nb.setLargeIcon(local);
+            NotificationManager nm = (NotificationManager) act.getSystemService(Context.NOTIFICATION_SERVICE);
+            nm.notify(notifId, nb.build());
+            return;
+        }
+
+        // distant ?
+        if (avatarUrl.startsWith("http")) {
+            new Thread(() -> {
+                Bitmap remote = tryLoadBitmapRemote(avatarUrl);
+                if (remote != null) {
+                    NotificationManager nm = (NotificationManager) act.getSystemService(Context.NOTIFICATION_SERVICE);
+                    nb.setLargeIcon(remote);
+                    nm.notify(notifId, nb.build());
+                }
+            }).start();
+        }
+    }
+
     /** Notif locale (quand Socket reçoit en background). */
     private static void showIncomingCallNotification(Activity activity, Bundle b) {
         ensureCallsChannelWithRingtone(activity);
 
-        String callId     = b.getString("callId", "");
-        String callerName = b.getString("callerName", "Unknown");
+        String callId      = b.getString("callId", "");
+        String callerName  = b.getString("callerName", "Unknown");
+        String avatarUrl   = b.getString("avatarUrl", "");
+        String callerPhone = b.getString("callerPhone", ""); // 👈 NEW
+
+        String displayName = (callerName == null || callerName.trim().isEmpty()) ? "Inconnu" : callerName;
+        String phoneOrId   = (callerPhone == null || callerPhone.trim().isEmpty())
+                ? b.getString("callerId", "")
+                : callerPhone;
 
         Intent inCall = new Intent(activity, IncomingCallActivity.class);
         inCall.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
@@ -362,7 +501,8 @@ public class MainActivity extends FlutterActivity {
         NotificationCompat.Builder nb = new NotificationCompat.Builder(activity, CALLS_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                 .setContentTitle("Appel entrant")
-                .setContentText(callerName.isEmpty() ? "Inconnu" : callerName)
+                .setContentText(displayName) // collapsed
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + phoneOrId)) // 👈 name + number
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setOngoing(true)
@@ -376,8 +516,12 @@ public class MainActivity extends FlutterActivity {
             nb.setSound(ringUri);
         }
 
+        int notifId = notificationIdFor(callId);
         Notification n = nb.build();
         NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.notify(notificationIdFor(callId), n);
+        nm.notify(notifId, n);
+
+        // avatar (local immédiat / http en asynchrone)
+        applyLargeIconIfAny(activity, avatarUrl, notifId, nb);
     }
 }

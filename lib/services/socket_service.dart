@@ -2,6 +2,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
+// 👇 NEW: pour récupérer phone/avatar depuis le profil local
+import 'package:get/get.dart';
+import '../controllers/user_controller.dart';
+
 class SocketService {
   static SocketService? _instance;
 
@@ -72,6 +76,11 @@ class SocketService {
 
   void Function(String conversationId, String fromUserId)? onTyping;
   void Function(String conversationId, String fromUserId)? onStopTyping;
+
+  // dans SocketService
+  void disconnect() {
+    _socket?.disconnect();
+  }
 
   final Map<String, String> _nameById = {};
 
@@ -311,12 +320,24 @@ class SocketService {
       _queue(() => initiateCall(callerId, recipientId, callerName, callType));
       return;
     }
+
+    // 👇 NEW: enrichir avec phone & avatar locaux (si dispos)
+    String callerPhone = '';
+    String avatarUrl   = '';
+    try {
+      final u = Get.find<UserController>().currentUser.value;
+      callerPhone = (u?.phoneNumber ?? '').trim();
+      avatarUrl   = (u?.image ?? '').trim();
+    } catch (_) {}
+
     debugPrint('[Socket] initiate-call → $recipientId  type=$callType');
     _socket!.emit('initiate-call', {
       'callerId'   : callerId,
       'recipientId': recipientId,
       'name'       : callerName,
       'callType'   : callType,
+      'callerPhone': callerPhone, // 👈 NEW
+      'avatarUrl'  : avatarUrl,   // 👈 NEW
     });
   }
 
@@ -326,12 +347,24 @@ class SocketService {
       _queue(() => initiateGroupCall(callerId, memberIds, callerName, callType));
       return;
     }
+
+    // 👇 NEW: enrichir avec phone & avatar locaux (si dispos)
+    String callerPhone = '';
+    String avatarUrl   = '';
+    try {
+      final u = Get.find<UserController>().currentUser.value;
+      callerPhone = (u?.phoneNumber ?? '').trim();
+      avatarUrl   = (u?.image ?? '').trim();
+    } catch (_) {}
+
     debugPrint('[Socket] initiate-group-call → ${memberIds.join(',')} type=$callType');
     _socket!.emit('initiate-group-call', {
       'callerId'  : callerId,
       'memberIds' : memberIds,
       'name'      : callerName,
       'callType'  : callType,
+      'callerPhone': callerPhone, // 👈 NEW
+      'avatarUrl'  : avatarUrl,   // 👈 NEW
     });
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
+import 'package:flutter/services.dart'; // 👈 MethodChannel (ui_accept / ui_reject)
 
 import '../../../controllers/user_controller.dart';
 import '../../../services/webrtccontroller.dart';
@@ -25,7 +26,7 @@ class AudioCallScreen extends StatefulWidget {
   final bool isGroup;
   final List<String>? memberIds; // sans moi
 
-  // 👇 nouveau flag pour gérer l’accept côté destinataire
+  // 👇 flag pour gérer l’accept côté destinataire (cas autoAccept)
   final bool shouldSendLocalAccept;
 
   const AudioCallScreen({
@@ -39,7 +40,7 @@ class AudioCallScreen extends StatefulWidget {
     required this.existingCallId,
     this.isGroup = false,
     this.memberIds,
-    this.shouldSendLocalAccept = false, // 👈 default
+    this.shouldSendLocalAccept = false,
   });
 
   @override
@@ -49,11 +50,22 @@ class AudioCallScreen extends StatefulWidget {
 class _AudioCallScreenState extends State<AudioCallScreen>
     with SingleTickerProviderStateMixin {
 
+  static const _platform = MethodChannel('incoming_calls'); // 👈
+
   bool _micOn      = true;
   bool _speakerOn  = true;
   bool _show       = true;
   bool _sent       = false;        // pour l’appelant
-  bool _acceptSent = false;        // 👈 pour le destinataire
+  bool _acceptSent = false;        // destinataire (local accept)
+
+  // ⬇️ Anti-doublons / contrôle de fin locale
+  bool _handledTerminal = false;
+  bool _locallyEnded    = false;
+  bool _endSignaled     = false;
+
+  // ⬇️ Marquage natif (empêche “missed” tardifs côté Android)
+  bool _nativeAcceptMarked  = false;
+  bool _nativeRejectMarked  = false;
 
   late final AnimationController _anim;
   late final Animation<double>   _scale;
@@ -112,11 +124,22 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
       _fallbackTimeout?.cancel();
       _fallbackTimeout = Timer(const Duration(seconds: 32), () {
-        if (!mounted || _start != null) return;
+        if (!mounted || _start != null || _handledTerminal) return;
         CallSounds.stopRingBack();
+        _handledTerminal = true;
         _showBanner('Ne répond pas', Colors.orange);
         _finishAfterBeep(() => CallSounds.playEndBeep());
         _log(CallStatus.timeout);
+
+        // annuler côté serveur pour fermer l’écran chez B
+        try {
+          final s = Get.find<UserController>().socketService;
+          if (_callId != null) {
+            s.cancelCall(_callId!, widget.userId);
+          } else if (!_isGroup) {
+            s.cancelCall('${widget.userId}_${widget.recipientID}', widget.userId);
+          }
+        } catch (_) {}
       });
     }
 
@@ -133,10 +156,21 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     sock.onCallAccepted = (cid) {
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
-      setState(() {
-        _callId = cid;
-        _start  = DateTime.now();
-      });
+      if (mounted) {
+        setState(() {
+          _callId = cid;
+          _start  = DateTime.now();
+        });
+      }
+
+      // 👇 Marque "accepted" côté Android pour (A et B)
+      if (!_nativeAcceptMarked) {
+        _nativeAcceptMarked = true;
+        final idToMark = (cid.isNotEmpty)
+            ? cid
+            : (widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}');
+        try { _platform.invokeMethod('ui_accept', {'callId': idToMark}); } catch (_) {}
+      }
 
       if (!_isGroup) {
         _rtc.addPeer(widget.recipientID, widget.name, initiator: widget.isCaller);
@@ -146,14 +180,33 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     };
 
     sock.onCallRejected  = () {
+      if (_handledTerminal) return;
+      _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
+
+      // 👇 Marque "rejected" pour empêcher un "missed" parasite côté A
+      if (!_nativeRejectMarked) {
+        _nativeRejectMarked = true;
+        final idToMark = _callId ?? widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
+        try {
+          _platform.invokeMethod('ui_reject', {
+            'callId'    : idToMark,
+            'callerId'  : widget.userId,
+            'callerName': widget.name,
+            'avatarUrl' : widget.avatarUrl ?? '',
+          });
+        } catch (_) {}
+      }
+
       _showBanner('Occupé', Colors.red);
       _finishAfterBeep(() => CallSounds.playBusyOnce());
       _log(CallStatus.rejected);
     };
 
     sock.onCallEnded     = () {
+      if (_handledTerminal) return;
+      _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
       _showBanner('Appel terminé', Colors.white70);
@@ -162,6 +215,8 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     };
 
     sock.onCallCancelled = () {
+      if (_handledTerminal) return;
+      _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
       if (mounted) Get.back();
@@ -169,12 +224,16 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     };
 
     sock.onCallError     = (_) {
+      if (_handledTerminal) return;
+      _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
       if (mounted) Get.back();
     };
 
     sock.onCallTimeout   = () {
+      if (_handledTerminal) return;
+      _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
       _showBanner('Ne répond pas', Colors.orange);
@@ -182,10 +241,14 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _log(CallStatus.timeout);
     };
 
-    // 👇 après enregistrement des listeners : envoyer l'ACCEPT côté destinataire
+    // 👇 destinataire auto-accept (depuis notif plein écran)
     if (!widget.isCaller && widget.shouldSendLocalAccept && !_acceptSent) {
       _acceptSent = true;
       final idToAccept = widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
+
+      // marque "accepted" immédiatement côté Android (coupe notif/alarme s’il en reste)
+      try { _platform.invokeMethod('ui_accept', {'callId': idToAccept}); } catch (_) {}
+
       sock.acceptCall(idToAccept, widget.userId);
     }
 
@@ -203,9 +266,9 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     CallSounds.stopRingBack();
     rtc.Helper.setSpeakerphoneOn(false);
 
-    // ⬇️ ne termine l'appel que s'il avait démarré
-    if (_start != null && _callId != null) {
-      Get.find<UserController>().socketService.endCall(_callId!);
+    // n’émettre endCall qu’en cas de raccrochage local et si pas déjà envoyé
+    if (_locallyEnded && _callId != null && !_endSignaled) {
+      try { Get.find<UserController>().socketService.endCall(_callId!); } catch (_) {}
     }
 
     _rtc.leave();
@@ -377,8 +440,13 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
   void _hangUp() {
     final sock = Get.find<UserController>().socketService;
+
     _fallbackTimeout?.cancel();
     CallSounds.stopRingBack();
+
+    // marque la fin locale et bloque les prochains events terminaux
+    _locallyEnded  = true;
+    _handledTerminal = true;
 
     if (_start == null) {
       _log(CallStatus.cancelled);
@@ -389,7 +457,10 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       }
     } else {
       _log(CallStatus.ended, endedAt: DateTime.now());
-      if (_callId != null) sock.endCall(_callId!);
+      if (_callId != null) {
+        sock.endCall(_callId!);
+        _endSignaled = true; // évite un second endCall en dispose
+      }
     }
     Get.back();
   }

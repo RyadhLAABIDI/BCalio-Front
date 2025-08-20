@@ -18,14 +18,39 @@ import androidx.core.app.NotificationCompat;
 
 import java.io.InputStream;
 
+/**
+ * Remplace la notif "Appel entrant" par:
+ *  - "Appel refusé" (ACTION_REJECT)
+ *  - "Appel manqué" (ACTION_TIMEOUT / call_cancel)
+ * Coupe la sonnerie en annulant la notif en cours et bascule sur un channel silencieux.
+ * Avatar: uniquement si déjà en cache local (content://, file://, chemin absolu). AUCUN DL réseau.
+ */
 public class CallActionReceiver extends BroadcastReceiver {
 
+    // Channel silencieux pour "Appel manqué" / "Appel refusé"
     private static final String MISSED_CHANNEL_ID = "calls_missed";
 
+    // Méta pour rappel des infos si l’app est tuée
     private static final String PREFS_CALLS = "bcalio_calls";
-    private static String KEY_ID(String callId)   { return "id_" + callId; }
-    private static String KEY_NAME(String callId) { return "n_" + callId; }
-    private static String KEY_AVA(String callId)  { return "a_" + callId; }
+    private static String KEY_ID(String callId)     { return "id_" + callId; }
+    private static String KEY_NAME(String callId)   { return "n_" + callId; }
+    private static String KEY_AVA(String callId)    { return "a_" + callId; }
+    private static String KEY_PHONE(String callId)  { return "p_" + callId; } // 👈 NEW
+    // statut local (empêche "manqué" tardif)
+    private static String KEY_STATUS(String callId) { return "s_" + callId; }
+    private static final String STATUS_ACCEPTED = "accepted";
+    private static final String STATUS_REJECTED = "rejected";
+
+    /** ID utilisé pour la notif "ringing" (même que le service) */
+    private static int ringingId(String callId) {
+        return (callId == null) ? 0 : callId.hashCode();
+    }
+
+    /** ID séparé pour les notifs "manqué/refusé" → évite les cancel involontaires */
+    private static int missedId(String callId) {
+        // XOR avec une constante pour garantir un ID différent et stable
+        return (callId == null) ? 1 : (callId.hashCode() ^ 0x5A5A5A5A);
+    }
 
     @Override
     public void onReceive(Context ctx, Intent intent) {
@@ -34,45 +59,54 @@ public class CallActionReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         Bundle extras = intent.getExtras() != null ? intent.getExtras() : new Bundle();
 
-        String callId     = extras.getString("callId", "");
-        String callerId   = extras.getString("callerId", "");
-        String callerName = extras.getString("callerName", "Unknown");
-        String avatarUrl  = extras.getString("avatarUrl", "");
+        String callId      = extras.getString("callId", "");
+        String callerId    = extras.getString("callerId", "");
+        String callerName  = extras.getString("callerName", "Unknown");
+        String avatarUrl   = extras.getString("avatarUrl", "");
+        String callerPhone = extras.getString("callerPhone", ""); // 👈 NEW
 
-        if (isEmpty(callerId) || isEmpty(callerName) || isEmpty(avatarUrl)) {
+        // Fallback depuis prefs si extras incomplets
+        if (isEmpty(callerId) || isEmpty(callerName) || isEmpty(avatarUrl) || isEmpty(callerPhone)) {
             SharedPreferences sp = ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE);
-            if (isEmpty(callerId))   callerId   = orEmpty(sp.getString(KEY_ID(callId),   ""));
-            if (isEmpty(callerName)) callerName = orEmpty(sp.getString(KEY_NAME(callId), ""));
-            if (isEmpty(avatarUrl))  avatarUrl  = orEmpty(sp.getString(KEY_AVA(callId),  ""));
+            if (isEmpty(callerId))     callerId     = orEmpty(sp.getString(KEY_ID(callId),   ""));
+            if (isEmpty(callerName))   callerName   = orEmpty(sp.getString(KEY_NAME(callId), ""));
+            if (isEmpty(avatarUrl))    avatarUrl    = orEmpty(sp.getString(KEY_AVA(callId),  ""));
+            if (isEmpty(callerPhone))  callerPhone  = orEmpty(sp.getString(KEY_PHONE(callId),"")); // 👈 NEW
         }
 
         String displayName = (!isEmpty(callerName)) ? callerName : callerId;
+        String line2 = (!isEmpty(callerPhone)) ? callerPhone : callerId;
 
-        int notifId = callId.hashCode();
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
 
         if (MyFirebaseMessagingService.ACTION_ACCEPT.equals(action)) {
-            cancelTimeoutAlarm(ctx, callId);
-            nm.cancel(notifId);
+            // marquer accepté (anti "Appel manqué" ultérieur)
+            ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE)
+               .edit().putString(KEY_STATUS(callId), STATUS_ACCEPTED).apply();
 
-            Bundle b = new Bundle(extras);
-            b.putBoolean("autoAccept", true);
-            Intent open = new Intent(ctx, IncomingCallActivity.class)
-                    .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    .putExtras(b);
-            ctx.startActivity(open);
+            // coupe timer + ferme la notif "ringing"
+            cancelTimeoutAlarm(ctx, callId);
+            nm.cancel(ringingId(callId));
             return;
         }
 
         if (MyFirebaseMessagingService.ACTION_REJECT.equals(action)) {
+            // marquer rejeté (anti "manqué" doublon)
+            ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE)
+               .edit().putString(KEY_STATUS(callId), STATUS_REJECTED).apply();
+
+            // 1) coupe le timer
             cancelTimeoutAlarm(ctx, callId);
-            nm.cancel(notifId);
+            // 2) ferme la notif "ringing" (coupe la sonnerie)
+            nm.cancel(ringingId(callId));
+            // 3) affiche "Appel refusé" (silencieux) avec **ID distinct**
             ensureMissedChannel(ctx);
 
             NotificationCompat.Builder nb = new NotificationCompat.Builder(ctx, MISSED_CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                     .setContentTitle("Appel refusé")
                     .setContentText(displayName)
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + line2)) // 👈 name + number
                     .setOnlyAlertOnce(true)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -83,27 +117,21 @@ public class CallActionReceiver extends BroadcastReceiver {
             Bitmap large = tryLoadBitmapLocal(ctx, avatarUrl);
             if (large != null) nb.setLargeIcon(large);
 
-            nm.notify(notifId, nb.build());
-
-            Bundle b = new Bundle(extras);
-            b.putBoolean("autoReject", true);
-            Intent open = new Intent(ctx, MainActivity.class)
-                    .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtras(b);
-            ctx.startActivity(open);
+            nm.notify(missedId(callId), nb.build());  // 👈 ID différent
             return;
         }
 
-        // 👇 NEW: “swipe to dismiss” de la notif d’appel entrant → compter comme manqué
-        if (MyFirebaseMessagingService.ACTION_INCOMING_DELETE.equals(action)
-                || MyFirebaseMessagingService.ACTION_TIMEOUT.equals(action)) {
-            nm.cancel(notifId);
+        if (MyFirebaseMessagingService.ACTION_TIMEOUT.equals(action)) {
+            // 1) ferme la notif "ringing" → coupe la sonnerie
+            nm.cancel(ringingId(callId));
+            // 2) affiche "Appel manqué" (silencieux) avec **ID distinct**
             ensureMissedChannel(ctx);
 
             NotificationCompat.Builder nb = new NotificationCompat.Builder(ctx, MISSED_CHANNEL_ID)
                     .setSmallIcon(android.R.drawable.stat_notify_missed_call)
                     .setContentTitle("Appel manqué")
                     .setContentText(displayName)
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + line2)) // 👈 name + number
                     .setOnlyAlertOnce(true)
                     .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -114,19 +142,33 @@ public class CallActionReceiver extends BroadcastReceiver {
             Bitmap large = tryLoadBitmapLocal(ctx, avatarUrl);
             if (large != null) nb.setLargeIcon(large);
 
-            nm.notify(notifId, nb.build());
+            nm.notify(missedId(callId), nb.build());  // 👈 ID différent
+
+            // nettoyage des métadonnées pour ce callId
             clearMeta(ctx, callId);
         }
+
+        // (Optionnel) : si vous voulez traiter le "swipe to dismiss" comme "manqué",
+        // ajoutez un case ici pour ACTION_INCOMING_DELETE -> même bloc que TIMEOUT.
     }
 
+    /* ============================================================
+     * Helpers
+     * ============================================================ */
+
+    /** Crée (au besoin) le channel silencieux pour les "missed/refused". */
     private static void ensureMissedChannel(Context ctx) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
             NotificationChannel ch = nm.getNotificationChannel(MISSED_CHANNEL_ID);
             if (ch == null) {
                 ch = new NotificationChannel(
-                        MISSED_CHANNEL_ID, "Missed Calls", NotificationManager.IMPORTANCE_DEFAULT);
+                        MISSED_CHANNEL_ID,
+                        "Missed Calls",
+                        NotificationManager.IMPORTANCE_DEFAULT
+                );
                 ch.setDescription("Missed/Refused call notifications (silent)");
+                // silencieux
                 ch.setSound(null, null);
                 ch.enableVibration(false);
                 nm.createNotificationChannel(ch);
@@ -134,17 +176,22 @@ public class CallActionReceiver extends BroadcastReceiver {
         }
     }
 
+    /** Annule l’AlarmManager du timeout pour ce callId. */
     private static void cancelTimeoutAlarm(Context ctx, String callId) {
         if (isEmpty(callId)) return;
         Intent i = new Intent(ctx, CallActionReceiver.class)
                 .setAction(MyFirebaseMessagingService.ACTION_TIMEOUT);
         PendingIntent pi = PendingIntent.getBroadcast(
-                ctx, requestCodeFor(callId, 99), i, pendingIntentFlagsCompat());
+                ctx,
+                requestCodeFor(callId, 99),
+                i,
+                pendingIntentFlagsCompat()
+        );
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am != null) am.cancel(pi);
     }
 
-    /** Avatar: UNIQUEMENT si local (content://, file://, /…). */
+    /** Charge un bitmap UNIQUEMENT si l’URI est locale (content://, file://, /…). Pas de réseau. */
     private static Bitmap tryLoadBitmapLocal(Context ctx, String uriOrPath) {
         if (isEmpty(uriOrPath)) return null;
         try {
@@ -161,7 +208,7 @@ public class CallActionReceiver extends BroadcastReceiver {
             if (uriOrPath.startsWith("/")) {
                 return BitmapFactory.decodeFile(uriOrPath);
             }
-            return null; // pas de DL réseau ici
+            return null; // http(s) → jamais dans un receiver
         } catch (Throwable ignored) {
             return null;
         }
@@ -185,6 +232,8 @@ public class CallActionReceiver extends BroadcastReceiver {
                 .remove(KEY_ID(callId))
                 .remove(KEY_NAME(callId))
                 .remove(KEY_AVA(callId))
+                .remove(KEY_STATUS(callId))
+                .remove(KEY_PHONE(callId)) // 👈 NEW
                 .apply();
     }
 

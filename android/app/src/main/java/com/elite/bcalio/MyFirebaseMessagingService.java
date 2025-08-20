@@ -34,15 +34,20 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     public static final String ACTION_ACCEPT          = "com.elite.bcalio.ACTION_ACCEPT_CALL";
     public static final String ACTION_REJECT          = "com.elite.bcalio.ACTION_REJECT_CALL";
     public static final String ACTION_TIMEOUT         = "com.elite.bcalio.ACTION_TIMEOUT_CALL";
-    // 👇 NEW: utilisé quand l’utilisateur “swipe” pour fermer la notif d’appel entrant
+    // Utilisé si l’utilisateur “swipe” la notif d’appel entrant
     public static final String ACTION_INCOMING_DELETE = "com.elite.bcalio.ACTION_INCOMING_DELETE";
 
     private static final long MISSED_CALL_AFTER_MS = 30_000L;
 
     private static final String PREFS_CALLS = "bcalio_calls";
-    private static String KEY_ID(String callId)   { return "id_" + callId; }
-    private static String KEY_NAME(String callId) { return "n_" + callId; }
-    private static String KEY_AVA(String callId)  { return "a_" + callId; }
+    private static String KEY_ID(String callId)     { return "id_" + callId; }
+    private static String KEY_NAME(String callId)   { return "n_" + callId; }
+    private static String KEY_AVA(String callId)    { return "a_" + callId; }
+    private static String KEY_PHONE(String callId)  { return "p_" + callId; } // 👈 NEW
+    // 👇 statut local pour bloquer les "manqués" tardifs
+    private static String KEY_STATUS(String callId) { return "s_" + callId; }
+    private static final String STATUS_ACCEPTED = "accepted";
+    private static final String STATUS_REJECTED = "rejected";
 
     @Override
     public void onMessageReceived(RemoteMessage msg) {
@@ -54,23 +59,24 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         if ("incoming_call".equals(type)) {
             handleIncomingCall(msg);
         } else if ("call_cancel".equals(type)) {
-            handleCallCancelOrTimeout(msg);   // ← transforme en “Appel manqué”
+            handleCallCancelOrTimeout(msg);
         } else if ("call_timeout".equals(type)) {
-            handleCallCancelOrTimeout(msg);   // ← idem
+            handleCallCancelOrTimeout(msg);
         }
     }
 
     private void handleIncomingCall(RemoteMessage msg) {
-        String callId     = orEmpty(msg.getData().get("callId"));
-        String callerId   = orEmpty(msg.getData().get("callerId"));
-        String callerName = orEmpty(msg.getData().get("callerName"));
-        String callType   = orEmpty(msg.getData().get("callType"));
-        String avatarUrl  = orEmpty(msg.getData().get("avatarUrl"));
-        boolean isGroup   = "1".equals(msg.getData().get("isGroup"));
-        String members    = orEmpty(msg.getData().get("members"));
+        String callId      = orEmpty(msg.getData().get("callId"));
+        String callerId    = orEmpty(msg.getData().get("callerId"));
+        String callerName  = orEmpty(msg.getData().get("callerName"));
+        String callType    = orEmpty(msg.getData().get("callType"));
+        String avatarUrl   = orEmpty(msg.getData().get("avatarUrl"));
+        String callerPhone = orEmpty(msg.getData().get("callerPhone")); // 👈 NEW
+        boolean isGroup    = "1".equals(msg.getData().get("isGroup")) || "true".equalsIgnoreCase(orEmpty(msg.getData().get("isGroup")));
+        String members     = orEmpty(msg.getData().get("members"));
 
-        // mémorise pour fallback (si “cancel/timeout/delete” push arrive sans détails)
-        saveCallMeta(callId, callerId, callerName, avatarUrl);
+        // méta pour fallback (cancel/timeout ultérieur)
+        saveCallMeta(callId, callerId, callerName, avatarUrl, callerPhone); // 👈 save phone
 
         Bundle b = new Bundle();
         b.putString("callId", callId);
@@ -78,10 +84,18 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         b.putString("callerName", callerName);
         b.putString("callType", callType);
         b.putString("avatarUrl", avatarUrl);
+        b.putString("callerPhone", callerPhone); // 👈 NEW
         b.putBoolean("isGroup", isGroup);
         b.putString("members", members);
         b.putString("recipientID", "");
 
+        // 🟢 App AU PREMIER PLAN → pas de notif système, pas d’alarme. On livre juste à Flutter.
+        if (MainActivity.isInForeground()) {
+            MainActivity.enqueueIncomingCall(b);
+            return;
+        }
+
+        // 🟠 App en arrière-plan → notif + alarme timeout
         ensureCallsChannelWithRingtone(CHANNEL_ID);
 
         Intent inCall = new Intent(this, IncomingCallActivity.class)
@@ -93,22 +107,23 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         PendingIntent contentPI    = PendingIntent.getActivity(
                 this, requestCodeFor(callId, 2), inCall, piFlagsImmutable());
 
-        // 👇 deleteIntent: si l’utilisateur “swipe” la notif, on poste un “Appel manqué”
         Intent del = new Intent(this, CallActionReceiver.class)
                 .setAction(ACTION_INCOMING_DELETE)
                 .putExtras(b);
         PendingIntent deletePI = PendingIntent.getBroadcast(
                 this, requestCodeFor(callId, 3), del, piFlagsImmutable());
 
-        Bitmap large  = tryLoadBitmap(avatarUrl); // OK si l’image répond vite ; sinon, enlève-le.
+        Bitmap large  = tryLoadBitmap(avatarUrl);
         Uri ringUri   = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
         String title  = "Appel entrant";
-        String text   = (callerName == null || callerName.trim().isEmpty()) ? "Inconnu" : callerName;
+        String displayName = (callerName == null || callerName.trim().isEmpty()) ? "Inconnu" : callerName;
+        String phoneOrId   = (callerPhone == null || callerPhone.trim().isEmpty()) ? callerId : callerPhone;
 
         NotificationCompat.Builder nb = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                 .setContentTitle(title)
-                .setContentText(text)
+                .setContentText(displayName) // collapsed
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + phoneOrId)) // 👈 name + number
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setOngoing(true)
@@ -116,8 +131,8 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setFullScreenIntent(fullScreenPI, true)
                 .setContentIntent(contentPI)
-                .setDeleteIntent(deletePI)                              // 👈 important
-                .setTimeoutAfter(MISSED_CALL_AFTER_MS + 1500);         // filet de sécu
+                .setDeleteIntent(deletePI)
+                .setTimeoutAfter(MISSED_CALL_AFTER_MS + 1500);
 
         if (large != null) nb.setLargeIcon(large);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) nb.setSound(ringUri);
@@ -126,28 +141,38 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         nm.notify(notificationId(callId), n);
 
-        // timer local → ACTION_TIMEOUT (affiche “Appel manqué” + coupe la sonnerie)
         scheduleTimeoutAlarm(callId, b);
 
-        // remonte aussi vers Flutter si l’app est/front
+        // Si l’app revient au 1er plan, Flutter saura afficher l’écran
         MainActivity.enqueueIncomingCall(b);
     }
 
-    /** Transforme la notif courante en "Appel manqué" et coupe la sonnerie. */
+    /** Affiche "Appel manqué" SAUF si déjà accepté / rejeté localement. */
     private void handleCallCancelOrTimeout(RemoteMessage msg) {
         String callId = orEmpty(msg.getData().get("callId"));
         if (callId.isEmpty()) return;
 
         cancelTimeoutAlarm(callId);
 
-        String callerId   = orEmpty(msg.getData().get("callerId"));
-        String callerName = orEmpty(msg.getData().get("callerName"));
-        String avatarUrl  = orEmpty(msg.getData().get("avatarUrl"));
-        if (callerId.isEmpty() || callerName.isEmpty() || avatarUrl.isEmpty()) {
-            SharedPreferences sp = getSharedPreferences(PREFS_CALLS, MODE_PRIVATE);
-            if (callerId.isEmpty())   callerId   = orEmpty(sp.getString(KEY_ID(callId),   ""));
-            if (callerName.isEmpty()) callerName = orEmpty(sp.getString(KEY_NAME(callId), ""));
-            if (avatarUrl.isEmpty())  avatarUrl  = orEmpty(sp.getString(KEY_AVA(callId),  ""));
+        SharedPreferences sp = getSharedPreferences(PREFS_CALLS, MODE_PRIVATE);
+        // 🚫 Bloque les "manqués" tardifs si l’appel a été accepté ou rejeté
+        String st = sp.getString(KEY_STATUS(callId), "");
+        if (STATUS_ACCEPTED.equals(st) || STATUS_REJECTED.equals(st)) {
+            cancelNotification(callId);
+            clearCallMeta(callId);
+            return;
+        }
+
+        // Sinon, on affiche bien "Appel manqué"
+        String callerId    = orEmpty(msg.getData().get("callerId"));
+        String callerName  = orEmpty(msg.getData().get("callerName"));
+        String avatarUrl   = orEmpty(msg.getData().get("avatarUrl"));
+        String callerPhone = orEmpty(msg.getData().get("callerPhone")); // peut être vide
+        if (callerId.isEmpty() || callerName.isEmpty() || avatarUrl.isEmpty() || callerPhone.isEmpty()) {
+            if (callerId.isEmpty())    callerId    = orEmpty(sp.getString(KEY_ID(callId),   ""));
+            if (callerName.isEmpty())  callerName  = orEmpty(sp.getString(KEY_NAME(callId), ""));
+            if (avatarUrl.isEmpty())   avatarUrl   = orEmpty(sp.getString(KEY_AVA(callId),  ""));
+            if (callerPhone.isEmpty()) callerPhone = orEmpty(sp.getString(KEY_PHONE(callId),"")); // 👈 fallback
         }
 
         cancelNotification(callId);
@@ -157,6 +182,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         b.putString("callerId", callerId);
         b.putString("callerName", callerName);
         b.putString("avatarUrl", avatarUrl);
+        b.putString("callerPhone", callerPhone); // 👈 NEW
 
         Intent br = new Intent(this, CallActionReceiver.class)
                 .setAction(ACTION_TIMEOUT)
@@ -268,13 +294,14 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         }
     }
 
-    private void saveCallMeta(String callId, String callerId, String callerName, String avatarUrl) {
+    private void saveCallMeta(String callId, String callerId, String callerName, String avatarUrl, String callerPhone) {
         if (callId == null || callId.isEmpty()) return;
         SharedPreferences sp = getSharedPreferences(PREFS_CALLS, MODE_PRIVATE);
         sp.edit()
-          .putString(KEY_ID(callId),   callerId   == null ? "" : callerId)
-          .putString(KEY_NAME(callId), callerName == null ? "" : callerName)
-          .putString(KEY_AVA(callId),  avatarUrl  == null ? "" : avatarUrl)
+          .putString(KEY_ID(callId),    callerId    == null ? "" : callerId)
+          .putString(KEY_NAME(callId),  callerName  == null ? "" : callerName)
+          .putString(KEY_AVA(callId),   avatarUrl   == null ? "" : avatarUrl)
+          .putString(KEY_PHONE(callId), callerPhone == null ? "" : callerPhone) // 👈 NEW
           .apply();
     }
 
@@ -285,6 +312,8 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
           .remove(KEY_ID(callId))
           .remove(KEY_NAME(callId))
           .remove(KEY_AVA(callId))
+          .remove(KEY_STATUS(callId)) // nettoie aussi le statut
+          .remove(KEY_PHONE(callId))  // 👈 NEW
           .apply();
     }
 }

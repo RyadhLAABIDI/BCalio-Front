@@ -108,7 +108,6 @@ void _setupIncomingCallChannel() {
 /* Récupère l’avatar du caller depuis les caches (conversations / contacts) */
 String? _findAvatarFor(String userId) {
   try {
-    // 1) Chercher dans les conversations en mémoire
     if (Get.isRegistered<ConversationController>()) {
       final convCtrl = Get.find<ConversationController>();
       for (final conv in convCtrl.conversations) {
@@ -121,25 +120,20 @@ String? _findAvatarFor(String userId) {
       }
     }
 
-    // 2) Chercher dans les contacts (API puis cache combiné)
     if (Get.isRegistered<ContactController>()) {
       final cCtrl = Get.find<ContactController>();
-
-      // allContacts (si chargé)
       for (final c in cCtrl.allContacts) {
         if (c.id == userId) {
           final img = (c.image ?? '').trim();
           if (img.isNotEmpty) return img;
         }
       }
-      // contacts (liste visible en app)
       for (final c in cCtrl.contacts) {
         if (c.id == userId) {
           final img = (c.image ?? '').trim();
           if (img.isNotEmpty) return img;
         }
       }
-      // originalApiContacts (si présent)
       for (final c in cCtrl.originalApiContacts) {
         if (c.id == userId) {
           final img = (c.image ?? '').trim();
@@ -148,7 +142,46 @@ String? _findAvatarFor(String userId) {
       }
     }
   } catch (_) {}
-  return null; // pas trouvé
+  return null;
+}
+
+/* ✅ NEW: Récupère le numéro du caller depuis les caches (conversations / contacts) */
+String? _findPhoneFor(String userId) {
+  try {
+    if (Get.isRegistered<ConversationController>()) {
+      final convCtrl = Get.find<ConversationController>();
+      for (final conv in convCtrl.conversations) {
+        for (final u in conv.users) {
+          if (u.id == userId) {
+            final ph = (u.phoneNumber ?? '').trim();
+            if (ph.isNotEmpty) return ph;
+          }
+        }
+      }
+    }
+    if (Get.isRegistered<ContactController>()) {
+      final cCtrl = Get.find<ContactController>();
+      for (final c in cCtrl.allContacts) {
+        if (c.id == userId) {
+          final ph = (c.phoneNumber ?? '').trim();
+          if (ph.isNotEmpty) return ph;
+        }
+      }
+      for (final c in cCtrl.contacts) {
+        if (c.id == userId) {
+          final ph = (c.phoneNumber ?? '').trim();
+          if (ph.isNotEmpty) return ph;
+        }
+      }
+      for (final c in cCtrl.originalApiContacts) {
+        if (c.id == userId) {
+          final ph = (c.phoneNumber ?? '').trim();
+          if (ph.isNotEmpty) return ph;
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
 }
 
 /* Retourne mon userId (destinataire de l’appel), avec fallback sur le socket */
@@ -164,7 +197,7 @@ String _myUserIdOrFallback() {
       if (sockId.isNotEmpty) return sockId;
     }
   } catch (_) {}
-  return ''; // dernier recours
+  return '';
 }
 
 /* =========================
@@ -177,9 +210,52 @@ class _AppLifecycleSpy with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     state = s;
+    // Pilotage de la visibilité (serveur FCM fallback quand hidden)
+    if (s == AppLifecycleState.resumed) {
+      _setVisibility(true);
+    } else if (s == AppLifecycleState.paused ||
+        s == AppLifecycleState.inactive ||
+        s == AppLifecycleState.detached) {
+      _setVisibility(false);
+    }
   }
 
   static bool get isForeground => state == AppLifecycleState.resumed;
+}
+
+/* Envoie visible/hidden au backend + (dé)connexion socket en conséquence */
+void _setVisibility(bool visible) {
+  try {
+    if (!Get.isRegistered<UserController>()) return;
+    final sock = Get.find<UserController>().socketService;
+
+    // notifier le backend
+    sock.setVisibility(visible);
+
+    // Optionnel : couper/recréer le socket suivant l'état
+    if (!visible) {
+      // on coupe 2s après (laisse le temps à un éventuel resume rapide)
+      Future.delayed(const Duration(seconds: 2), () {
+        try {
+          if (!Get.isRegistered<UserController>()) return;
+          final s = Get.find<UserController>().socketService;
+          // 🔧 SocketService n'a pas disconnect(): on utilise dispose()
+          if (!_AppLifecycleSpy.isForeground && s.isConnected) s.dispose();
+        } catch (_) {}
+      });
+    } else {
+      if (!sock.isConnected) {
+        // Reconnexion: on lit userId / name depuis SharedPreferences
+        SharedPreferences.getInstance().then((sp) {
+          final uid = sp.getString('userId') ?? '';
+          final name = sp.getString('name') ?? '';
+          if (uid.isNotEmpty && name.isNotEmpty) {
+            sock.connectAndRegister(uid, name);
+          }
+        });
+      }
+    }
+  } catch (_) {}
 }
 
 /* Notifie nativement (fullScreenIntent + sonnerie TEL) si l’app n’est pas au 1er plan */
@@ -200,6 +276,7 @@ Future<void> _maybeNotifyIfBackground({
       'callerName': callerName,
       'callType': callType,
       'avatarUrl': _findAvatarFor(callerId) ?? '',
+      'callerPhone': _findPhoneFor(callerId) ?? '', // 👈 NEW
       'isGroup': isGroup,
       'members': memberIds.join(','), // string
       'recipientID': _myUserIdOrFallback(),
@@ -334,13 +411,13 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
     final sock = Get.find<UserController>().socketService;
 
     // Résoudre mon userId maintenant si vide
-    String resolvedMyId = (myId.trim().isNotEmpty) ? myId.trim() : sock.userId.trim();
+    String resolvedMyId =
+        (myId.trim().isNotEmpty) ? myId.trim() : sock.userId.trim();
 
     // Si déjà connecté → on envoie tout de suite
     if (sock.isConnected) {
       if (resolvedMyId.isEmpty) resolvedMyId = sock.userId.trim();
       if (resolvedMyId.isEmpty) {
-        // pas de userId encore dispo : on met en file avec placeholder
         _pendingCallActions.add(_PendingCallAction(kind, callId, ''));
       } else {
         if (kind == 'accept') {
@@ -358,13 +435,16 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
     // Au prochain "registered", on flush proprement la file
     final prev = sock.onRegistered;
     sock.onRegistered = () {
-      try { prev?.call(); } catch (_) {}
+      try {
+        prev?.call();
+      } catch (_) {}
       final copy = List<_PendingCallAction>.from(_pendingCallActions);
       _pendingCallActions.clear();
       for (final a in copy) {
         try {
-          final uid = a.userId.trim().isNotEmpty ? a.userId.trim() : sock.userId.trim();
-          if (uid.isEmpty) continue; // pas encore de userId, on ne tente pas
+          final uid =
+              a.userId.trim().isNotEmpty ? a.userId.trim() : sock.userId.trim();
+          if (uid.isEmpty) continue;
           if (a.kind == 'accept') {
             sock.acceptCall(a.callId, uid);
           } else {
@@ -374,7 +454,6 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
       }
     };
   } catch (_) {
-    // En cas d'erreur inattendue, on garde l'action en file pour un envoi plus tard
     _pendingCallActions.add(_PendingCallAction(kind, callId, myId));
   }
 }
@@ -382,10 +461,10 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
 /* ===================== NOUVELLE VERSION ===================== */
 void _doNavigateToIncoming(Map<String, dynamic> a) {
   try {
-    final callerId   = (a['callerId'] ?? '').toString();
+    final callerId = (a['callerId'] ?? '').toString();
     final callerName = (a['callerName'] ?? 'Unknown').toString();
-    final callId     = (a['callId'] ?? '').toString();
-    final callType   = (a['callType'] ?? 'audio').toString();
+    final callId = (a['callId'] ?? '').toString();
+    final callType = (a['callType'] ?? 'audio').toString();
 
     final providedAvatar = a['avatarUrl'];
     final resolvedAvatar =
@@ -394,13 +473,21 @@ void _doNavigateToIncoming(Map<String, dynamic> a) {
             : _findAvatarFor(callerId);
 
     final providedRecipient = (a['recipientID'] ?? '').toString();
-    final myId = providedRecipient.isNotEmpty ? providedRecipient : _myUserIdOrFallback();
+    final myId = providedRecipient.isNotEmpty
+        ? providedRecipient
+        : _myUserIdOrFallback();
 
     final bool isGroup = a['isGroup'] == true || a['isGroup'] == '1';
     final List<String> members = (() {
       final raw = (a['members'] ?? '').toString().trim();
       if (raw.isEmpty) return <String>[];
-      if (raw.contains(',')) return raw.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      if (raw.contains(',')) {
+        return raw
+            .split(',')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      }
       return <String>[];
     })();
 
@@ -425,26 +512,26 @@ void _doNavigateToIncoming(Map<String, dynamic> a) {
         MaterialPageRoute(
           builder: (_) => isVideo
               ? VideoCallScreen(
-                  name:          callerName,
-                  avatarUrl:     resolvedAvatar,
-                  phoneNumber:   '',
-                  recipientID:   isGroup ? '' : callerId,
-                  userId:        myId,
-                  isCaller:      false,
+                  name: callerName,
+                  avatarUrl: resolvedAvatar,
+                  phoneNumber: '',
+                  recipientID: isGroup ? '' : callerId,
+                  userId: myId,
+                  isCaller: false,
                   existingCallId: callId,
-                  isGroup:       isGroup,
-                  memberIds:     members,
+                  isGroup: isGroup,
+                  memberIds: members,
                 )
               : AudioCallScreen(
-                  name:          callerName,
-                  avatarUrl:     resolvedAvatar,
-                  phoneNumber:   '',
-                  recipientID:   isGroup ? '' : callerId,
-                  userId:        myId,
-                  isCaller:      false,
+                  name: callerName,
+                  avatarUrl: resolvedAvatar,
+                  phoneNumber: '',
+                  recipientID: isGroup ? '' : callerId,
+                  userId: myId,
+                  isCaller: false,
                   existingCallId: callId,
-                  isGroup:       isGroup,
-                  memberIds:     members,
+                  isGroup: isGroup,
+                  memberIds: members,
                 ),
           fullscreenDialog: true,
         ),
