@@ -15,7 +15,6 @@ public class IncomingCallActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         // enlever l’anim pour éviter tout flash
         overridePendingTransition(0, 0);
-
         super.onCreate(savedInstanceState);
 
         Bundle extras = getIntent() != null ? getIntent().getExtras() : null;
@@ -23,8 +22,19 @@ public class IncomingCallActivity extends Activity {
         if (extras != null) {
             String callId = extras.getString("callId", "");
 
-            // ✅ annule le timer "missed call" + coupe la notif "ringing"
+            // ✅ Si l’appel est déjà terminé, ne pas forward à Flutter
             if (!callId.isEmpty()) {
+                String st = getSharedPreferences("bcalio_calls", MODE_PRIVATE)
+                        .getString("s_" + callId, "");
+                if ("timeout".equals(st) || "rejected".equals(st) || "accepted".equals(st)) {
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    nm.cancel(callId.hashCode());
+                    finish();
+                    overridePendingTransition(0, 0);
+                    return;
+                }
+
+                // ✅ annule le timer "missed call" + coupe la notif "ringing"
                 cancelTimeoutAlarm(this, callId);
                 NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 nm.cancel(callId.hashCode());

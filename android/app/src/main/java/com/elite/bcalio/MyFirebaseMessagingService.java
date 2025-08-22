@@ -31,7 +31,8 @@ import java.util.Locale;
 import java.util.TimeZone;
 
 /**
- * ⚠️ NE TOUCHE PAS À LA PARTIE "CALLS" — ajout propre de la partie "chat_message"
+ * ⚠️ Ne pas toucher à la logique de base — correctif: marquage "timeout" persistant
+ * + timestamp d'arrivée pour empêcher l’ouverture d’UI fantôme après cancel/timeout.
  */
 public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
@@ -55,8 +56,10 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     private static String KEY_AVA(String callId)    { return "a_" + callId; }
     private static String KEY_PHONE(String callId)  { return "p_" + callId; }
     private static String KEY_STATUS(String callId) { return "s_" + callId; }
+    private static String KEY_TS(String callId)     { return "t_" + callId; } // 👈 NEW
     private static final String STATUS_ACCEPTED = "accepted";
     private static final String STATUS_REJECTED = "rejected";
+    private static final String STATUS_TIMEOUT  = "timeout";
 
     @Override
     public void onMessageReceived(RemoteMessage msg) {
@@ -73,7 +76,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             case "call_timeout":
                 handleCallCancelOrTimeout(msg);
                 break;
-            case "chat_message": // 👈 NEW
+            case "chat_message":
                 handleChatMessage(msg);
                 break;
         }
@@ -151,9 +154,8 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         if (large != null) nb.setLargeIcon(large);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) nb.setSound(ringUri);
 
-        Notification n = nb.build();
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.notify(notificationId(callId), n);
+        nm.notify(notificationId(callId), nb.build());
 
         scheduleTimeoutAlarm(callId, b);
         MainActivity.enqueueIncomingCall(b);
@@ -186,6 +188,9 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
         cancelNotification(callId);
 
+        // ✅ Marque "timeout" pour bloquer toute ouverture d’UI ultérieure
+        sp.edit().putString(KEY_STATUS(callId), STATUS_TIMEOUT).apply();
+
         Bundle b = new Bundle();
         b.putString("callId", callId);
         b.putString("callerId", callerId);
@@ -198,7 +203,8 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 .putExtras(b);
         sendBroadcast(br);
 
-        clearCallMeta(callId);
+        // Nettoyage partiel — on garde le STATUS
+        clearCallMetaExceptStatus(callId);
     }
 
     private void scheduleTimeoutAlarm(String callId, Bundle b) {
@@ -233,7 +239,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
      * ===================  CHAT MESSAGES  =====================
      * ========================================================= */
     private void handleChatMessage(RemoteMessage msg) {
-        // 👉 n’affiche la notif que si l’app n’est PAS au 1er plan
         if (MainActivity.isInForeground()) return;
 
         String roomId      = orEmpty(msg.getData().get("roomId"));
@@ -243,12 +248,11 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         String avatarUrl   = orEmpty(msg.getData().get("avatarUrl"));
         String text        = orEmpty(msg.getData().get("text"));
         String sentAt      = orEmpty(msg.getData().get("sentAt"));
-        String contentType = orEmpty(msg.getData().get("contentType")); // "text" | "image" | "audio" | "video"
+        String contentType = orEmpty(msg.getData().get("contentType"));
         boolean isGroup    = "1".equals(orEmpty(msg.getData().get("isGroup"))) || "true".equalsIgnoreCase(orEmpty(msg.getData().get("isGroup")));
 
         ensureMessagesChannel(CHANNEL_ID_MSG);
 
-        // Intent → MainActivity avec extras “open_chat”
         Intent openChat = new Intent(this, MainActivity.class)
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         openChat.putExtra("push_kind", "chat");
@@ -270,7 +274,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                         : PendingIntent.FLAG_UPDATE_CURRENT
         );
 
-        // Titre + contenu
         String title = (fromName == null || fromName.trim().isEmpty()) ? "Nouveau message" : fromName;
         String displayContent;
         switch ((contentType == null ? "" : contentType)) {
@@ -291,17 +294,15 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 .setAutoCancel(true)
                 .setContentIntent(contentPI);
 
-        // avatar en largeIcon
         Bitmap large = tryLoadBitmap(avatarUrl);
         if (large != null) nb.setLargeIcon(large);
 
-        // Big styles
         if ("image".equals(contentType)) {
-            Bitmap picture = tryLoadBitmap(text /* parfois text contient l’URL de l’image */);
+            Bitmap picture = tryLoadBitmap(text);
             if (picture != null) {
                 nb.setStyle(new NotificationCompat.BigPictureStyle()
                         .bigPicture(picture)
-                        .bigLargeIcon((Bitmap) null) // ← fix: l’overload n’est plus ambigu
+                        .bigLargeIcon((Bitmap) null)
                         .setSummaryText(title));
             } else {
                 nb.setStyle(new NotificationCompat.BigTextStyle().bigText(displayContent));
@@ -310,19 +311,16 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             nb.setStyle(new NotificationCompat.BigTextStyle().bigText(displayContent));
         }
 
-        // Horodatage (si fourni) — sans javax.xml.bind
         long when = parseIsoWhen(sentAt);
         if (when > 0L) {
             nb.setWhen(when);
             nb.setShowWhen(true);
         }
 
-        // Groupe par conversation
         nb.setGroup("chat_" + roomId);
 
-        Notification n = nb.build();
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.notify(notificationId("chat:" + roomId), n);
+        nm.notify(notificationId("chat:" + roomId), nb.build());
     }
 
     /* ====================== Helpers communs ====================== */
@@ -365,8 +363,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             ch.enableLights(true);
             ch.setLightColor(Color.CYAN);
             ch.enableVibration(true);
-            ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
-            // sonnerie par défaut (différente de l'appel)
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE); // 👈 corrige (Notification, pas Compat)
             Uri def = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
             AudioAttributes attrs = new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
@@ -380,7 +377,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     }
 
     private int getSmallIconForMessages() {
-        // idéalement, un icône monochrome; à défaut, le launcher
         return getApplicationInfo().icon != 0 ? getApplicationInfo().icon : android.R.drawable.stat_notify_more;
     }
 
@@ -439,6 +435,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
           .putString(KEY_NAME(callId),  callerName  == null ? "" : callerName)
           .putString(KEY_AVA(callId),   avatarUrl   == null ? "" : avatarUrl)
           .putString(KEY_PHONE(callId), callerPhone == null ? "" : callerPhone)
+          .putLong  (KEY_TS(callId),    System.currentTimeMillis()) // 👈 NEW
           .apply();
     }
 
@@ -451,40 +448,42 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
           .remove(KEY_AVA(callId))
           .remove(KEY_STATUS(callId))
           .remove(KEY_PHONE(callId))
+          .remove(KEY_TS(callId)) // 👈 NEW
+          .apply();
+    }
+
+    /** Nettoyage partiel: conserve KEY_STATUS pour bloquer l’UI future */
+    private void clearCallMetaExceptStatus(String callId) {
+        if (callId == null || callId.isEmpty()) return;
+        SharedPreferences sp = getSharedPreferences(PREFS_CALLS, MODE_PRIVATE);
+        sp.edit()
+          .remove(KEY_ID(callId))
+          .remove(KEY_NAME(callId))
+          .remove(KEY_AVA(callId))
+          .remove(KEY_PHONE(callId))
+          .remove(KEY_TS(callId)) // 👈 NEW
           .apply();
     }
 
     /* ===================== Date parsing sans javax.xml.bind ===================== */
 
-    /**
-     * Parse un ISO-8601 / timestamp en millis (UTC) si possible.
-     * Accepte:
-     *  - "2024-09-01T12:34:56Z"
-     *  - "2024-09-01T12:34:56.789Z"
-     *  - "2024-09-01T12:34:56+01:00" (ou -03:30)
-     *  - timestamp numérique (en s ou ms)
-     * Retourne 0 si non parsable.
-     */
     private long parseIsoWhen(String sentAt) {
         try {
             if (sentAt == null) return 0L;
             String s = sentAt.trim();
             if (s.isEmpty()) return 0L;
 
-            // Timestamp numérique ?
             try {
                 long v = Long.parseLong(s);
-                if (v > 100000000000L) return v;       // déjà en ms
-                if (v > 0L) return v * 1000L;          // en secondes
+                if (v > 100000000000L) return v;       // ms
+                if (v > 0L) return v * 1000L;          // s
             } catch (NumberFormatException ignore) {}
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try {
-                    // OffsetDateTime gère Z et +hh:mm
                     java.time.OffsetDateTime odt = java.time.OffsetDateTime.parse(s);
                     return odt.toInstant().toEpochMilli();
                 } catch (Throwable t) {
-                    // essai ZonedDateTime (certains backends)
                     try {
                         java.time.ZonedDateTime zdt = java.time.ZonedDateTime.parse(s);
                         return zdt.toInstant().toEpochMilli();
@@ -492,7 +491,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
                 }
             }
 
-            // Compat <26 via SimpleDateFormat
             return parseIsoCompat(s);
         } catch (Throwable t) {
             return 0L;
@@ -502,8 +500,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     private long parseIsoCompat(String iso) {
         try {
             String s = iso.trim();
-
-            // Normalise "+hh:mm" → "+hhmm" pour SimpleDateFormat
             if (s.matches(".*[+-]\\d\\d:\\d\\d$")) {
                 s = s.replaceAll("([+-]\\d\\d):(\\d\\d)$", "$1$2");
             }

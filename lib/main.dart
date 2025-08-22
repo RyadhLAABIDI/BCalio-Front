@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:io';            // pour HttpClient (avatar)
-import 'dart:typed_data';    // pour Uint8List
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bcalio/models/conversation_model.dart';
 import 'package:bcalio/test_app.dart';
@@ -52,10 +52,7 @@ final navigatorKey = GlobalKey<NavigatorState>();
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-/* ============================ NOTIFS MESSAGES (Flutter) ============================
-   Ces helpers restent présents mais NE SONT PLUS UTILISÉS pour Android.
-   Android natif (MyFirebaseMessagingService) gère 100% des notifs "chat".
-=================================================================================== */
+/* ============================ NOTIFS MESSAGES (Flutter) ============================ */
 const String _msgChannelId   = 'msg_channel';
 const String _msgChannelName = 'Messages';
 const String _msgChannelDesc = 'Notifications de nouveaux messages';
@@ -127,9 +124,8 @@ Future<void> _showMessageNotification({
   );
 }
 
-/* ---------------- FCM background handler (Flutter) ----------------
-   ❌ NE PLUS ENREGISTRER CE HANDLER SUR ANDROID.
-------------------------------------------------------------------- */
+/* ---------------- FCM background handler (Flutter) ---------------- */
+// ❌ NE PAS enregistrer pour Android : géré nativement
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   debugPrint('🔕 Background Message: ${message.messageId}');
@@ -179,6 +175,7 @@ void _setupIncomingCallChannel() {
           Map<String, dynamic>.from(call.arguments as Map);
       _navigateToIncoming(args);
     }
+    return;
   });
 }
 
@@ -198,26 +195,23 @@ void _setupChatPushChannel() {
   });
 }
 
-/* ====== Handshake "chat_ready" (anti-course au démarrage) ====== */
+/* ====== Handshake "chat_ready" ====== */
 Future<void> _announceChatReady() async {
   try {
     await _chatPushChannel.invokeMethod('chat_ready');
-  } catch (_) {
-    // si le canal Android n'est pas encore là, on retentera via _signalChatReadyResilient
-  }
+  } catch (_) {}
 }
-
-/// On ping plusieurs fois pour ne rater aucun timing (cold start, etc.)
 void _signalChatReadyResilient() {
   void ping() => _announceChatReady();
-  ping(); // tout de suite
+  ping();
   Future.delayed(const Duration(milliseconds: 300), ping);
-  WidgetsBinding.instance.addPostFrameCallback((_) => ping()); // après 1er frame
+  WidgetsBinding.instance.addPostFrameCallback((_) => ping());
 }
 
 /* ===========================================================
-   ==  🔧 HELPERS POUR CORRIGER L’AVATAR & LE RECIPIENT ID  ==
+   ==  Helpers contact/avatar/phone/id ==
    =========================================================== */
+
 
 String? _findAvatarFor(String userId) {
   try {
@@ -232,7 +226,6 @@ String? _findAvatarFor(String userId) {
         }
       }
     }
-
     if (Get.isRegistered<ContactController>()) {
       final cCtrl = Get.find<ContactController>();
       for (final c in cCtrl.allContacts) {
@@ -303,7 +296,6 @@ String _myUserIdOrFallback() {
       final me = userCtrl.currentUser.value;
       final meId = (me?.id ?? '').trim();
       if (meId.isNotEmpty) return meId;
-
       final sockId = (userCtrl.socketService.userId).trim();
       if (sockId.isNotEmpty) return sockId;
     }
@@ -360,6 +352,16 @@ void _setVisibility(bool visible) {
       }
     }
   } catch (_) {}
+}
+
+/* -------- helper natif: est-ce "mort" ? -------- */
+Future<bool> _isCallDeadNative(String callId) async {
+  try {
+    final ok = await _incomingCallChannel.invokeMethod('is_call_dead', {'callId': callId});
+    return ok == true;
+  } catch (_) {
+    return false;
+  }
 }
 
 /* Notifie nativement si l’app n’est pas au 1er plan */
@@ -431,8 +433,14 @@ void _bindSocketIncomingHandlers() {
   }
 
   // 1–1
-  sock.onIncomingCall = (callId, callerId, callerName, callType) {
+  sock.onIncomingCall = (callId, callerId, callerName, callType) async {
     debugPrint('[Socket][GLOBAL] incoming-call $callerId ($callType) id=$callId');
+
+    // ⛔ filtre mort/stale
+    if (await _isCallDeadNative(callId)) {
+      debugPrint('[Socket] drop stale/dead call $callId');
+      return;
+    }
 
     if (!_AppLifecycleSpy.isForeground) {
       _maybeNotifyIfBackground(
@@ -454,8 +462,13 @@ void _bindSocketIncomingHandlers() {
 
   // Groupe
   sock.onIncomingGroupCall =
-      (callId, callerId, callerName, callType, members) {
+      (callId, callerId, callerName, callType, members) async {
     debugPrint('[Socket][GLOBAL] incoming-GROUP $callerId ($callType) id=$callId');
+
+    if (await _isCallDeadNative(callId)) {
+      debugPrint('[Socket] drop stale/dead group call $callId');
+      return;
+    }
 
     final myId = _myUserIdOrFallback();
     final ids = <String>[];
@@ -558,12 +571,18 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
 }
 
 /* ===================== Navigation vers écran d'appel ===================== */
-void _doNavigateToIncoming(Map<String, dynamic> a) {
+Future<void> _doNavigateToIncoming(Map<String, dynamic> a) async {
   try {
     final callerId = (a['callerId'] ?? '').toString();
     final callerName = (a['callerName'] ?? 'Unknown').toString();
     final callId = (a['callId'] ?? '').toString();
     final callType = (a['callType'] ?? 'audio').toString();
+
+    // ⛔ vérifie côté natif avant toute UI
+    if (await _isCallDeadNative(callId)) {
+      debugPrint('[incoming_call] ignored dead/stale call $callId');
+      return;
+    }
 
     final providedAvatar = a['avatarUrl'];
     final resolvedAvatar =
@@ -666,7 +685,7 @@ void main() async {
 
   _setupIncomingCallChannel();
   _setupChatPushChannel();
-  _signalChatReadyResilient(); // 👈 NEW: annonce "prêt" (plusieurs pings)
+  _signalChatReadyResilient();
 
   await Firebase.initializeApp();
   await _getFCMToken();
@@ -732,7 +751,7 @@ void main() async {
     sock.connectAndRegister(uid, name);
   }
 
-  // ❌ NE PLUS ENREGISTRER le handler background Flutter pour Android
+  // ❌ Ne pas enregistrer le handler background Flutter sur Android
   // FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   WidgetsBinding.instance.addPostFrameCallback((_) => _drainPendingIncoming());
@@ -746,17 +765,13 @@ void main() async {
 
 /* -------------------- OUVERTURE CONVERSATION -------------------- */
 
-// remplace seulement cette fonction dans ton main.dart
-
 Future<void> _openConversationFromPayload(String conversationId, {int attempt = 0}) async {
-  // anti-boucle
   if (attempt > 6) return;
 
   try {
     final convCtrl = Get.find<ConversationController>();
     final usrCtrl = Get.find<UserController>();
 
-    // token pas encore prêt ? réessaie un peu plus tard
     final token = await usrCtrl.getToken();
     if (token == null || token.isEmpty) {
       Future.delayed(const Duration(milliseconds: 400),
@@ -764,10 +779,8 @@ Future<void> _openConversationFromPayload(String conversationId, {int attempt = 
       return;
     }
 
-    // recharge (peut prendre un peu de temps)
     await convCtrl.refreshConversations(token);
 
-    // trouve la conv
     final conv = convCtrl.conversations.firstWhere(
       (c) => c.id == conversationId,
       orElse: () => Conversation(
@@ -780,7 +793,6 @@ Future<void> _openConversationFromPayload(String conversationId, {int attempt = 
       ),
     );
 
-    // pas encore en mémoire ? réessaie
     if (conv.id.isEmpty) {
       Future.delayed(const Duration(milliseconds: 400),
           () => _openConversationFromPayload(conversationId, attempt: attempt + 1));
@@ -799,7 +811,6 @@ Future<void> _openConversationFromPayload(String conversationId, {int attempt = 
           createdAt: other.createdAt,
         ));
   } catch (e) {
-    // sécurité: petit retry si quelque chose n’est pas prêt
     Future.delayed(const Duration(milliseconds: 400),
         () => _openConversationFromPayload(conversationId, attempt: attempt + 1));
   }
@@ -824,7 +835,6 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 👇 Extra-sécurité : on re-ping dès que le 1er frame est prêt
     WidgetsBinding.instance.addPostFrameCallback((_) => _announceChatReady());
 
     return Obx(() => GetMaterialApp(

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:slide_to_act/slide_to_act.dart';
-import 'package:flutter/services.dart'; // 👈 pour ui_accept / ui_reject / ui_timeout
+import 'package:flutter/services.dart';
 
 import '../../../controllers/user_controller.dart';
 import 'audio_call_screen.dart';
@@ -43,10 +43,9 @@ class IncomingCallScreen extends StatefulWidget {
 }
 
 class _IncomingCallScreenState extends State<IncomingCallScreen> {
-  static const _platform = MethodChannel('incoming_calls'); // 👈
-  static const Duration _uiRingTimeout = Duration(seconds: 32); // ≈ côté A (32s)
+  static const _platform = MethodChannel('incoming_calls');
+  static const Duration _uiRingTimeout = Duration(seconds: 32);
 
-  // 👇 nouveau: timer + garde-fou pour ne fermer qu’une fois
   Timer? _autoDismiss;
   bool   _closed = false;
 
@@ -54,22 +53,18 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
   void initState() {
     super.initState();
 
-    // ▶️ sonnerie d’appel entrant
     CallSounds.playIncoming();
 
-    // ⏱️ Fallback local: si aucun event serveur ne ferme l’écran → auto-close
     _autoDismiss?.cancel();
     _autoDismiss = Timer(_uiRingTimeout, () async {
       if (!mounted || _closed) return;
       try {
-        // informe le canal natif (si notif plein écran côté Android)
         await _platform.invokeMethod('ui_timeout', {'callId': widget.callId});
       } catch (_) {}
       await _log(CallStatus.missed);
       _close();
     });
 
-    // auto-fermeture si l’appelant annule / termine / timeout (événements socket)
     final sock = Get.find<UserController>().socketService;
     sock
       ..onCallCancelled = () { _onRemoteEnd(CallStatus.cancelled); }
@@ -129,7 +124,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // fond
           Positioned.fill(
             child: widget.avatarUrl != null
                 ? Image.network(widget.avatarUrl!, fit: BoxFit.cover)
@@ -137,7 +131,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
           ),
           Positioned.fill(child: Container(color: Colors.black.withOpacity(.6))),
 
-          // infos
           Align(
             alignment: Alignment.topCenter,
             child: Padding(
@@ -169,7 +162,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
             ),
           ),
 
-          // actions
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
@@ -186,7 +178,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                     borderRadius: 40,
                     sliderButtonIcon: const Icon(Iconsax.arrow_up, color: Colors.white, size: 28),
                     onSubmit: () async {
-                      // stop les timers / sons avant de naviguer
                       _cancelLocalTimer();
                       CallSounds.stopIncoming();
 
@@ -194,7 +185,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen> {
                         await _platform.invokeMethod('ui_accept', {'callId': widget.callId});
                       } catch (_) {}
 
-                      // ⚠️ ne pas envoyer accept ici (race condition) — on laisse l’écran d’appel l’envoyer
                       Get.off(() => isVideo
                           ? VideoCallScreen(
                               name:          widget.callerName,

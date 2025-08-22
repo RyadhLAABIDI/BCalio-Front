@@ -8,6 +8,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -41,6 +42,8 @@ import io.flutter.plugin.common.MethodChannel;
  * - reset des canaux/états statiques lors du detach de l’engine (cleanUpFlutterEngine)
  * - flag engineReady
  * - mise en file si pas prêt + try/catch autour des invokeMethod
+ * - filtrage des appels "morts" (timeout/rejected/accepted ou stale > 45s) pour éviter l’ouverture d’UI fantôme
+ * - méthode 'is_call_dead' exposée au canal natif
  */
 public class MainActivity extends FlutterActivity {
 
@@ -60,17 +63,23 @@ public class MainActivity extends FlutterActivity {
     private static volatile boolean inForeground = false;
     public  static boolean isInForeground() { return inForeground; }
 
-    // NEW: engine prêt ? (canal valide ?)
+    // engine prêt ?
     private static volatile boolean engineReady = false;
 
-    // NEW: Dart (côté Flutter) a-t-il dit qu’il est prêt à recevoir "open_chat_from_push" ?
+    // Dart prêt côté chat ?
     private static volatile boolean chatDartReady = false;
 
     // ---- statut local pour bloquer les "manqués" tardifs (appels) ----
     private static final String PREFS_CALLS = "bcalio_calls";
     private static String KEY_STATUS(String callId) { return "s_" + callId; }
+    private static String KEY_TS(String callId)     { return "t_" + callId; }   // 👈 timestamp d’arrivée
     private static final String STATUS_ACCEPTED = "accepted";
     private static final String STATUS_REJECTED = "rejected";
+    private static final String STATUS_TIMEOUT  = "timeout";
+    private static final long   RING_STALE_MS   = 45_000L;                       // 👈 au-delà → considéré mort
+
+    // Contexte application statique
+    private static volatile Context appCtx;
 
     private static void markAccepted(Context ctx, String callId) {
         if (callId == null || callId.isEmpty()) return;
@@ -87,12 +96,42 @@ public class MainActivity extends FlutterActivity {
         return b != null ? b.getString("callId", "") : "";
     }
 
+    /** Vérifie si l’appel est déjà terminé (timeout/rejected/accepted) OU trop ancien (>45s). */
+    private static boolean isCallDead(String callId) {
+        if (appCtx == null || callId == null || callId.isEmpty()) return false;
+        SharedPreferences sp = appCtx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE);
+
+        // 1) statut explicite
+        String st = sp.getString(KEY_STATUS(callId), "");
+        if (STATUS_ACCEPTED.equals(st) || STATUS_REJECTED.equals(st) || STATUS_TIMEOUT.equals(st)) {
+            return true;
+        }
+
+        // 2) stale par âge (si on a le timestamp)
+        long ts = sp.getLong(KEY_TS(callId), 0L);
+        if (ts > 0L) {
+            long age = System.currentTimeMillis() - ts;
+            if (age > RING_STALE_MS) {
+                // marque timeout pour bloquer définitivement
+                sp.edit().putString(KEY_STATUS(callId), STATUS_TIMEOUT).apply();
+                return true;
+            }
+        }
+        return false;
+    }
+
     /* ====================== APPELS ====================== */
 
     private static void deliverToFlutter(Bundle bundle) {
         if (bundle == null) return;
         String callId = extractCallId(bundle);
         if (callId.isEmpty()) return;
+
+        // bloque si "mort/stale"
+        if (isCallDead(callId)) {
+            if (appCtx != null) cancelIncomingById(appCtx, callId);
+            return;
+        }
 
         synchronized (handledCallIds) {
             boolean isAction = bundle.getBoolean("autoAccept", false) || bundle.getBoolean("autoReject", false);
@@ -120,7 +159,6 @@ public class MainActivity extends FlutterActivity {
         try {
             channel.invokeMethod("incoming_call", args);
         } catch (Throwable t) {
-            // si ça plante (mauvais messenger), on re-queue
             synchronized (pendingCalls) { pendingCalls.add(bundle); }
         }
     }
@@ -128,6 +166,12 @@ public class MainActivity extends FlutterActivity {
     public static void enqueueIncomingCall(Bundle bundle) {
         if (bundle == null) return;
         String callId = extractCallId(bundle);
+
+        // bloque si "mort/stale"
+        if (isCallDead(callId)) {
+            if (appCtx != null) cancelIncomingById(appCtx, callId);
+            return;
+        }
 
         if (!engineReady || channel == null) {
             synchronized (pendingCalls) {
@@ -171,7 +215,6 @@ public class MainActivity extends FlutterActivity {
         try {
             chatChannel.invokeMethod("open_chat_from_push", args);
         } catch (Throwable t) {
-            // messenger invalide => re-queue et on attend le nouvel engine
             synchronized (pendingChats) { pendingChats.add(bundle); }
         }
     }
@@ -185,14 +228,13 @@ public class MainActivity extends FlutterActivity {
         for (Bundle b : copy) deliverChatToFlutter(b);
     }
 
-    /* ======== Sonnerie native pour le destinataire (MethodChannel 'call_sounds') ======== */
+    /* ======== Sonnerie native pour le destinataire ======== */
     private static Ringtone sIncomingTone;
 
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
-        engineReady = true;       // NEW: l’engine est prêt
-        // on ne met PAS chatDartReady à true ici: on attend le ping Dart
+        engineReady = true;
 
         // Canal APPELS
         channel = new MethodChannel(
@@ -302,6 +344,20 @@ public class MainActivity extends FlutterActivity {
                     return;
                 }
 
+                // 👇 NEW: exposer un check côté natif
+                if ("is_call_dead".equals(call.method)) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> m = (Map<String, Object>) call.arguments;
+                        String callId = safeStr(m.get("callId"));
+                        boolean dead = isCallDead(callId);
+                        result.success(dead);
+                    } catch (Exception e) {
+                        result.success(false);
+                    }
+                    return;
+                }
+
                 result.notImplemented();
             }
         });
@@ -358,19 +414,17 @@ public class MainActivity extends FlutterActivity {
         chatChannel.setMethodCallHandler((call, result) -> {
             if ("chat_ready".equals(call.method)) {
                 chatDartReady = true;
-                flushPendingChats();   // Dart prêt => vider la file
+                flushPendingChats();
                 result.success(true);
                 return;
             }
             result.notImplemented();
         });
 
-        // Maintenant que l’engine est prêt, on peut vider les files
-        flushPendingCalls();
-        // ⚠ pendingChats sera vidé à la réception de "chat_ready"
+        flushPendingCalls(); // engine prêt → vider la file appels
+        // pendingChats vidé à "chat_ready"
     }
 
-    // NEW: reset propre lors du detach de l’engine
     @Override
     public void cleanUpFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.cleanUpFlutterEngine(flutterEngine);
@@ -385,8 +439,8 @@ public class MainActivity extends FlutterActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // on repart “propre”
         chatDartReady = false;
+        appCtx = getApplicationContext();
 
         Intent it = getIntent();
         if (it != null) {
@@ -429,7 +483,7 @@ public class MainActivity extends FlutterActivity {
         b.putString("contentType",intent.getStringExtra("contentType"));
         b.putBoolean("isGroup",   intent.getBooleanExtra("isGroup", false));
 
-        deliverChatToFlutter(b); // la méthode gère toute la logique “queue si pas prêt”
+        deliverChatToFlutter(b);
     }
 
     private static int notificationIdFor(String callId) {

@@ -17,7 +17,7 @@ class CallLogScreen extends StatefulWidget {
 class _CallLogScreenState extends State<CallLogScreen> {
   late final CallLogController ctrl;
 
-  // ordre et libellés des filtres (facile à maintenir)
+  // ordre et libellés des filtres
   final _filters = const [
     (CallFilter.all, 'Tous'),
     (CallFilter.missed, 'Manqués'),
@@ -36,6 +36,12 @@ class _CallLogScreenState extends State<CallLogScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
+    // ✅ espace top dynamique = statusBar + AppBar + barre de filtres (64) + marge
+    final topInset = MediaQuery.of(context).padding.top;
+    const filterBarHeight = 64.0;
+    const extra = 12.0;
+    final listTopPadding = topInset + kToolbarHeight + filterBarHeight + extra;
+
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -45,7 +51,7 @@ class _CallLogScreenState extends State<CallLogScreen> {
         title: const Text('Journal d’appel'),
         actions: [
           IconButton(
-            icon: const Icon(Iconsax.trash),
+            icon: const Icon(Iconsax.trash, color: Color.fromARGB(255, 213, 36, 23)), // rouge
             tooltip: 'Effacer l’historique',
             onPressed: () async {
               final ok = await showDialog<bool>(
@@ -55,7 +61,10 @@ class _CallLogScreenState extends State<CallLogScreen> {
                   content: const Text('Cette action est irréversible.'),
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
-                    TextButton(onPressed: () => Navigator.pop(ctx, true),  child: const Text('Effacer')),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('Effacer', style: TextStyle(color: Colors.red)),
+                    ),
                   ],
                 ),
               );
@@ -63,49 +72,13 @@ class _CallLogScreenState extends State<CallLogScreen> {
             },
           ),
         ],
-        // barre de filtres « verre dépoli » scrollable
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(64),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                child: Container(
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: (isDark ? Colors.white10 : Colors.white.withOpacity(0.6)),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: (isDark ? Colors.white12 : Colors.black12),
-                    ),
-                  ),
-                  child: Obx(() {
-                    final current = ctrl.filter.value;
-                    return SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(
-                        children: _filters.map((f) {
-                          final selected = current == f.$1;
-                          return _FilterPill(
-                            label: f.$2,
-                            selected: selected,
-                            onTap: () => ctrl.filter.value = f.$1,
-                          );
-                        }).toList(),
-                      ),
-                    );
-                  }),
-                ),
-              ),
-            ),
-          ),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(filterBarHeight),
+          child: _FiltersBar(),
         ),
       ),
 
-      // fond subtil dégradé pour un look « premium »
+      // fond subtil dégradé
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -121,22 +94,57 @@ class _CallLogScreenState extends State<CallLogScreen> {
           child: Obx(() {
             final items = ctrl.filtered;
 
-            // transition douce entre « vide » et « liste »
             return AnimatedSwitcher(
               duration: const Duration(milliseconds: 250),
               switchInCurve: Curves.easeOut,
               switchOutCurve: Curves.easeIn,
               child: items.isEmpty
-                  ? const _EmptyState()
+                  ? _EmptyState(topPadding: listTopPadding + 12)
                   : ListView.separated(
                       key: ValueKey('list_${ctrl.filter.value}'),
-                      padding: const EdgeInsets.fromLTRB(12, 90, 12, 12),
+                      padding: EdgeInsets.fromLTRB(12, listTopPadding, 12, 12), // ✅ plus sous l’AppBar
                       itemCount: items.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (_, i) {
                         final log = items[i];
 
-                        // entrée item « slide + fade » très légère
+                        // ✅ Pas de swipe. On affiche une petite poubelle intégrée à droite.
+                        final rowWithTrash = Stack(
+                          alignment: Alignment.centerRight,
+                          children: [
+                            // On réserve de la place à droite pour la poubelle
+                            Padding(
+                              padding: const EdgeInsets.only(right: 48),
+                              child: CallLogListItem(
+                                log: log,
+                                onTap: () => CallActionSheet.show(
+                                  context,
+                                  log: log,
+                                  onAudio: () => CallLauncher.fromLog(log, video: false),
+                                  onVideo: () => CallLauncher.fromLog(log, video: true),
+                                ),
+                                onCallAudio: () => CallLauncher.fromLog(log, video: false),
+                                onCallVideo: () => CallLauncher.fromLog(log, video: true),
+                                // onDelete reste fonctionnel si l'item l'utilise en interne
+                                onDelete: () {
+                                  if (log.id != null) ctrl.delete(log.id!);
+                                },
+                              ),
+                            ),
+
+                            // petite poubelle ronde – bien calée à droite
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: _InlineTrashButton(
+                                onPressed: (log.id == null)
+                                    ? null
+                                    : () => ctrl.delete(log.id!),
+                              ),
+                            ),
+                          ],
+                        );
+
+                        // petite anim d’entrée
                         return TweenAnimationBuilder<double>(
                           key: ValueKey('log_${log.id ?? i}'),
                           tween: Tween(begin: 0.0, end: 1.0),
@@ -148,18 +156,7 @@ class _CallLogScreenState extends State<CallLogScreen> {
                               child: Opacity(opacity: t, child: child),
                             );
                           },
-                          child: CallLogListItem(
-                            log: log,
-                            onTap: () => CallActionSheet.show(
-                              context,
-                              log: log,
-                              onAudio: () => CallLauncher.fromLog(log, video: false),
-                              onVideo: () => CallLauncher.fromLog(log, video: true),
-                            ),
-                            onCallAudio: () => CallLauncher.fromLog(log, video: false),
-                            onCallVideo: () => CallLauncher.fromLog(log, video: true),
-                            onDelete: () => ctrl.delete(log.id!),
-                          ),
+                          child: rowWithTrash,
                         );
                       },
                     ),
@@ -171,7 +168,94 @@ class _CallLogScreenState extends State<CallLogScreen> {
   }
 }
 
+/* ---------- petite poubelle intégrée ---------- */
+
+class _InlineTrashButton extends StatelessWidget {
+  const _InlineTrashButton({required this.onPressed});
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        width: 36,
+        height: 36,
+        decoration: ShapeDecoration(
+          shape: const CircleBorder(),
+          color: enabled ? Colors.red.withOpacity(.10) : Colors.transparent,
+        ),
+        child: IconButton(
+          tooltip: 'Supprimer',
+          onPressed: onPressed,
+          iconSize: 18,
+          splashRadius: 20,
+          icon: Icon(
+            Iconsax.trash,
+            color: enabled ? Colors.red : Theme.of(context).disabledColor,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /* ---------------- widgets privés ---------------- */
+
+class _FiltersBar extends StatelessWidget {
+  const _FiltersBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final ctrl = Get.find<CallLogController>();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            height: 48,
+            decoration: BoxDecoration(
+              color: (isDark ? Colors.white10 : Colors.white.withOpacity(0.6)),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: (isDark ? Colors.white12 : Colors.black12),
+              ),
+            ),
+            child: Obx(() {
+              final current = ctrl.filter.value;
+              final filters = const [
+                (CallFilter.all, 'Tous'),
+                (CallFilter.missed, 'Manqués'),
+                (CallFilter.incoming, 'Entrants'),
+                (CallFilter.outgoing, 'Sortants'),
+              ];
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: filters.map((f) {
+                    final selected = current == f.$1;
+                    return _FilterPill(
+                      label: f.$2,
+                      selected: selected,
+                      onTap: () => ctrl.filter.value = f.$1,
+                    );
+                  }).toList(),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _FilterPill extends StatelessWidget {
   const _FilterPill({
@@ -225,14 +309,15 @@ class _FilterPill extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({this.topPadding = 120});
+  final double topPadding;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 120, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, topPadding, 24, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
