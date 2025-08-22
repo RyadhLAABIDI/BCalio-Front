@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.elite.bcalio">
 
     <!-- Permissions -->
@@ -21,8 +22,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-
-    <!-- 🔔 pour setExactAndAllowWhileIdle au timeout "manqué" (Android 12+) -->
+    <!-- Pour setExactAndAllowWhileIdle (timeout appel) -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
@@ -65,7 +65,12 @@
             android:turnScreenOn="true"
             android:excludeFromRecents="true" />
 
-        <!-- Service FCM -->
+        <!-- ❌ Retire le service FCM du plugin pour que TON service reçoive les data messages -->
+        <service
+            android:name="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
+            tools:node="remove" />
+
+        <!-- ✅ Ton service FCM natif -->
         <service
             android:name=".MyFirebaseMessagingService"
             android:exported="false"
@@ -76,7 +81,6 @@
         </service>
 
         <!-- Receiver pour Accepter / Refuser / Timeout + DeleteIntent -->
-        <!-- 👍 sécurité : broadcast interne uniquement -->
         <receiver
             android:name=".CallActionReceiver"
             android:exported="false">
@@ -84,10 +88,17 @@
                 <action android:name="com.elite.bcalio.ACTION_ACCEPT_CALL" />
                 <action android:name="com.elite.bcalio.ACTION_REJECT_CALL" />
                 <action android:name="com.elite.bcalio.ACTION_TIMEOUT_CALL" />
-                <!-- 👇 déclenché quand la notif "appel entrant" est supprimée (deleteIntent) -->
                 <action android:name="com.elite.bcalio.ACTION_INCOMING_DELETE" />
             </intent-filter>
         </receiver>
+
+        <!-- (Optionnel) défauts au cas où un payload "notification" serait utilisé un jour -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/black" />
 
         <meta-data
             android:name="flutterEmbedding"

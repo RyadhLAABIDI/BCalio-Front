@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+
 import 'package:bcalio/routes.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -9,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:cloudinary/cloudinary.dart';
 import 'package:image/image.dart';
 import 'package:pdfx/pdfx.dart';
+
 import '../models/true_message_model.dart';
 import '../utils/misc.dart';
 
@@ -36,11 +38,11 @@ class MessageApiService {
         final List<dynamic> messagesJson = json.decode(response.body);
         return messagesJson.map((json) => Message.fromJson(json)).toList();
       } else {
-        print('Error: ${response.statusCode}, ${response.body}');
+        debugPrint('Error: ${response.statusCode}, ${response.body}');
         throw Exception('Failed to fetch messages: ${response.body}');
       }
     } catch (e) {
-      print('Error fetching messages: $e');
+      debugPrint('Error fetching messages: $e');
       rethrow;
     }
   }
@@ -61,10 +63,11 @@ class MessageApiService {
     }
 
     final url = Uri.parse('$baseUrl/mobile/messages');
-    final bodyPayload = {
+    final Map<String, dynamic> bodyPayload = {
       'conversationId': conversationId,
     };
     debugPrint('bodyPayload====================================: $bodyPayload');
+
     if (body != null && body.isNotEmpty) {
       bodyPayload['message'] = body;
     }
@@ -76,7 +79,8 @@ class MessageApiService {
     }
     if (video != null && video.isNotEmpty) {
       debugPrint('video send api ============$video');
-      bodyPayload['audio'] = video;
+      // ✅ FIX: envoyer la vidéo dans le champ "video" (et non "audio")
+      bodyPayload['video'] = video;
     }
 
     try {
@@ -95,21 +99,20 @@ class MessageApiService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return Message.fromJson(json.decode(response.body));
       } else {
-        print('Error: ${response.statusCode}, ${response.body}');
+        debugPrint('Error: ${response.statusCode}, ${response.body}');
         throw Exception('Failed to send message: ${response.body}');
       }
     } catch (e) {
-      print('Error sending message: $e');
+      debugPrint('Error sending message: $e');
       rethrow;
     }
   }
 
   Future<String> uploadFileToCloudinary(File file, bool isAudio) async {
-    debugPrint('isAudio====================${isAudio}');
+    debugPrint('isAudio====================$isAudio');
     try {
       final String extension = file.path.split('.').last.toLowerCase();
-      final List<String> imageUrls =
-          []; // Pour stocker les URLs des images uploadées
+      final List<String> imageUrls = []; // On stocke les URLs uploadées
 
       if (extension == 'pdf') {
         // Ouvrir le document PDF
@@ -135,7 +138,7 @@ class MessageApiService {
                 File('${Directory.systemTemp.path}/temp_page_$i.png');
             await tempFile.writeAsBytes(pngBytes);
 
-            print('Image saved to: ${tempFile.path}');
+            debugPrint('Image saved to: ${tempFile.path}');
 
             // Uploader l'image vers Cloudinary
             final response = await cloudinary.unsignedUpload(
@@ -143,16 +146,17 @@ class MessageApiService {
               uploadPreset: uploadPreset,
               resourceType: CloudinaryResourceType.image,
               progressCallback: (count, total) {
-                print('Uploading file: $count/$total bytes');
+                debugPrint('Uploading file: $count/$total bytes');
               },
             );
 
             if (response.isSuccessful) {
-              print('Upload image 111 successful: ${response.secureUrl}');
-              imageUrls.add(response.secureUrl!); // Ajouter l'URL à la liste
+              debugPrint('Upload image successful: ${response.secureUrl}');
+              imageUrls.add(response.secureUrl!);
             } else {
               throw Exception(
-                  'Failed to upload file: ${response.error?.toString()}');
+                'Failed to upload file: ${response.error?.toString()}',
+              );
             }
           } else {
             throw Exception('Failed to render PDF page to image');
@@ -166,24 +170,24 @@ class MessageApiService {
         await pdf.close();
       } else if (['m4a', 'mp3', 'mp4'].contains(extension) && isAudio) {
         // Uploader un fichier audio
-        debugPrint(
-            'Uploading audio file+++++++++++++++++++++++++++++++++++++++++++');
+        debugPrint('Uploading audio file+++++++++++++++++++++++++++++++++++++++++++');
         final response = await cloudinary.unsignedUpload(
           file: file.path,
           uploadPreset: uploadPreset,
           resourceType: CloudinaryResourceType.raw,
           folder: "audio",
           progressCallback: (count, total) {
-            print('Uploading file: $count/$total bytes');
+            debugPrint('Uploading file: $count/$total bytes');
           },
         );
 
         if (response.isSuccessful) {
-          print('Upload successful: ${response.secureUrl}');
+          debugPrint('Upload successful: ${response.secureUrl}');
           imageUrls.add(response.secureUrl!);
         } else {
           throw Exception(
-              'Failed to upload file: ${response.error?.toString()}');
+            'Failed to upload file: ${response.error?.toString()}',
+          );
         }
       } else if (['mp4', 'mov', 'avi', 'mkv'].contains(extension) && !isAudio) {
         // Uploader un fichier vidéo
@@ -192,16 +196,17 @@ class MessageApiService {
           uploadPreset: uploadPreset,
           resourceType: CloudinaryResourceType.video,
           progressCallback: (count, total) {
-            print('Uploading file: $count/$total bytes');
+            debugPrint('Uploading file: $count/$total bytes');
           },
         );
 
         if (response.isSuccessful) {
-          print('Upload successful: ${response.secureUrl}');
+          debugPrint('Upload successful: ${response.secureUrl}');
           imageUrls.add(response.secureUrl!);
         } else {
           throw Exception(
-              'Failed to upload file: ${response.error?.toString()}');
+            'Failed to upload file: ${response.error?.toString()}',
+          );
         }
       } else if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
           .contains(extension)) {
@@ -211,28 +216,29 @@ class MessageApiService {
           uploadPreset: uploadPreset,
           resourceType: CloudinaryResourceType.image,
           progressCallback: (count, total) {
-            print('Uploading file: $count/$total bytes');
+            debugPrint('Uploading file: $count/$total bytes');
           },
         );
 
         if (response.isSuccessful) {
-          print('Upload successful: ${response.secureUrl}');
+          debugPrint('Upload successful: ${response.secureUrl}');
           imageUrls.add(response.secureUrl!);
         } else {
           throw Exception(
-              'Failed to upload file: ${response.error?.toString()}');
+            'Failed to upload file: ${response.error?.toString()}',
+          );
         }
       }
 
       // Retourner les URLs séparées par un espace
       return imageUrls.join(' ');
     } catch (e) {
-      print('Cloudinary upload error: $e');
+      debugPrint('Cloudinary upload error: $e');
       throw Exception('Cloudinary upload error: $e');
     }
   }
 
-  deleteMessage(
+  Future<bool> deleteMessage(
     String conversationId,
     String messageId,
     String token,
@@ -257,11 +263,11 @@ class MessageApiService {
         debugPrint('Message deleted successfully');
         return true;
       } else {
-        print('Error: ${response.statusCode}, ${response.body}');
+        debugPrint('Error: ${response.statusCode}, ${response.body}');
         throw Exception('Failed to delete message: ${response.body}');
       }
     } catch (e) {
-      print('Error deleting message: $e');
+      debugPrint('Error deleting message: $e');
       rethrow;
     }
   }

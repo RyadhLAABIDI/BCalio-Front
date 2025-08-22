@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Noir opaque -->
+    <color name="black">#FF000000</color>
+    <!-- Tu peux définir d'autres couleurs ici si besoin -->
+</resources>

@@ -1,41 +1,47 @@
+// lib/services/push_api_service.dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+/// Petit client pour pinger ton call-server et déclencher la notif message.
 class PushApiService {
-  // ⚠️ Remplace par l’IP/host de TON serveur Node
-  static const String base = 'http://192.168.1.26';
+  // ⚠️ même hôte/port que pour /push/register
+  static const String _base = 'http://192.168.1.26:1906';
 
-  Future<void> registerToken({
-    required String userId,
-    required String fcmToken,
+  /// Déclenche une push "chat_message" (on peut passer 1 ou N destinataires).
+  Future<void> notifyNewMessage({
+    required List<String> toUserIds, // <- 1 ou plusieurs
+    required String roomId,
+    String? messageId,
+    required String fromId,
+    required String fromName,
+    String avatarUrl = '',
+    String text = '',
+    String contentType = 'text', // "text" | "image" | "audio" | "video"
+    bool isGroup = false,
+    String? sentAtIso, // DateTime.now().toUtc().toIso8601String()
   }) async {
+    final uri = Uri.parse('$_base/api/notify-message');
+    final body = {
+      'toUserIds': toUserIds.length == 1 ? toUserIds.first : toUserIds,
+      'roomId': roomId,
+      'messageId': messageId,
+      'fromId': fromId,
+      'fromName': fromName,
+      'avatarUrl': avatarUrl,
+      'text': text,
+      'sentAt': sentAtIso,
+      'isGroup': isGroup,
+      'contentType': contentType,
+    };
+
     final res = await http.post(
-      Uri.parse('$base/api/push/register'),
+      uri,
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'userId': userId, 'fcmToken': fcmToken}),
+      body: jsonEncode(body),
     );
 
     if (res.statusCode != 200) {
-      throw Exception(
-        'registerToken failed: ${res.statusCode} ${res.body}',
-      );
-    }
-  }
-
-  Future<void> unregisterToken({
-    required String userId,
-    required String fcmToken,
-  }) async {
-    final res = await http.post(
-      Uri.parse('$base/api/push/unregister'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'userId': userId, 'fcmToken': fcmToken}),
-    );
-
-    if (res.statusCode != 200) {
-      throw Exception(
-        'unregisterToken failed: ${res.statusCode} ${res.body}',
-      );
+      throw Exception('notify-message failed: ${res.statusCode} ${res.body}');
     }
   }
 }

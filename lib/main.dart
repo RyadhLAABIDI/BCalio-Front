@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:io';            // pour HttpClient (avatar)
+import 'dart:typed_data';    // pour Uint8List
 
 import 'package:bcalio/models/conversation_model.dart';
 import 'package:bcalio/test_app.dart';
 import 'package:bcalio/widgets/notifications/notification_card_widget.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,7 +37,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 /* permissions Cam / Mic */
 import 'package:permission_handler/permission_handler.dart';
 
-/* MethodChannel pour incoming_call (depuis Android) */
+/* MethodChannel */
 import 'package:flutter/services.dart';
 import 'widgets/chat/chat_room/incoming_call_screen.dart';
 
@@ -49,7 +52,84 @@ final navigatorKey = GlobalKey<NavigatorState>();
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
-/* ---------------- FCM background handler ---------------- */
+/* ============================ NOTIFS MESSAGES (Flutter) ============================
+   Ces helpers restent présents mais NE SONT PLUS UTILISÉS pour Android.
+   Android natif (MyFirebaseMessagingService) gère 100% des notifs "chat".
+=================================================================================== */
+const String _msgChannelId   = 'msg_channel';
+const String _msgChannelName = 'Messages';
+const String _msgChannelDesc = 'Notifications de nouveaux messages';
+
+Future<void> _ensureMsgChannel() async {
+  final android = flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  await android?.createNotificationChannel(
+    const AndroidNotificationChannel(
+      _msgChannelId,
+      _msgChannelName,
+      description: _msgChannelDesc,
+      importance: Importance.high,
+    ),
+  );
+}
+
+Future<Uint8List?> _downloadBytes(String? url, {int timeoutMs = 3500}) async {
+  if (url == null || url.trim().isEmpty || !url.startsWith('http')) return null;
+  try {
+    final client = HttpClient()..connectionTimeout = Duration(milliseconds: timeoutMs);
+    final req = await client.getUrl(Uri.parse(url));
+    final resp = await req.close();
+    if (resp.statusCode != 200) return null;
+    final bytes = await consolidateHttpClientResponseBytes(resp);
+    return bytes;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _showMessageNotification({
+  required String conversationId,
+  required String senderName,
+  required String bodyOrFallback,
+  String? avatarUrl,
+}) async {
+  await _ensureMsgChannel();
+
+  AndroidBitmap<Object>? largeIcon;
+  final bytes = await _downloadBytes(avatarUrl);
+  if (bytes != null) {
+    largeIcon = ByteArrayAndroidBitmap(bytes);
+  }
+
+  final details = NotificationDetails(
+    android: AndroidNotificationDetails(
+      _msgChannelId,
+      _msgChannelName,
+      channelDescription: _msgChannelDesc,
+      priority: Priority.high,
+      importance: Importance.high,
+      category: AndroidNotificationCategory.message,
+      styleInformation: BigTextStyleInformation(bodyOrFallback),
+      largeIcon: largeIcon,
+      subText: 'Nouveau message',
+      ticker: 'Nouveau message',
+    ),
+  );
+
+  final notifId = conversationId.hashCode;
+
+  await flutterLocalNotificationsPlugin.show(
+    notifId,
+    senderName,
+    bodyOrFallback,
+    details,
+    payload: conversationId,
+  );
+}
+
+/* ---------------- FCM background handler (Flutter) ----------------
+   ❌ NE PLUS ENREGISTRER CE HANDLER SUR ANDROID.
+------------------------------------------------------------------- */
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   debugPrint('🔕 Background Message: ${message.messageId}');
@@ -76,8 +156,9 @@ Future<void> _requestAVPermissions() async {
       'micro=${statuses[Permission.microphone]}');
 }
 
-/* ---------- canal natif "incoming_calls" ---------- */
+/* ---------- canaux natifs ---------- */
 const MethodChannel _incomingCallChannel = MethodChannel('incoming_calls');
+const MethodChannel _chatPushChannel = MethodChannel('chat_notifications');
 
 /// File d’attente si l’événement arrive avant que le Navigator soit prêt.
 final List<Map<String, dynamic>> _pendingIncoming = [];
@@ -101,11 +182,43 @@ void _setupIncomingCallChannel() {
   });
 }
 
+/* 👇 ouvre la conversation quand MainActivity envoie "open_chat_from_push" */
+void _setupChatPushChannel() {
+  _chatPushChannel.setMethodCallHandler((call) async {
+    if (call.method == 'open_chat_from_push') {
+      final Map<String, dynamic> a = Map<String, dynamic>.from(call.arguments as Map);
+      final roomId = (a['roomId'] ?? '').toString();
+      if (roomId.isEmpty) return;
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openConversationFromPayload(roomId);
+      });
+    }
+    return;
+  });
+}
+
+/* ====== Handshake "chat_ready" (anti-course au démarrage) ====== */
+Future<void> _announceChatReady() async {
+  try {
+    await _chatPushChannel.invokeMethod('chat_ready');
+  } catch (_) {
+    // si le canal Android n'est pas encore là, on retentera via _signalChatReadyResilient
+  }
+}
+
+/// On ping plusieurs fois pour ne rater aucun timing (cold start, etc.)
+void _signalChatReadyResilient() {
+  void ping() => _announceChatReady();
+  ping(); // tout de suite
+  Future.delayed(const Duration(milliseconds: 300), ping);
+  WidgetsBinding.instance.addPostFrameCallback((_) => ping()); // après 1er frame
+}
+
 /* ===========================================================
    ==  🔧 HELPERS POUR CORRIGER L’AVATAR & LE RECIPIENT ID  ==
    =========================================================== */
 
-/* Récupère l’avatar du caller depuis les caches (conversations / contacts) */
 String? _findAvatarFor(String userId) {
   try {
     if (Get.isRegistered<ConversationController>()) {
@@ -145,7 +258,6 @@ String? _findAvatarFor(String userId) {
   return null;
 }
 
-/* ✅ NEW: Récupère le numéro du caller depuis les caches (conversations / contacts) */
 String? _findPhoneFor(String userId) {
   try {
     if (Get.isRegistered<ConversationController>()) {
@@ -184,7 +296,6 @@ String? _findPhoneFor(String userId) {
   return null;
 }
 
-/* Retourne mon userId (destinataire de l’appel), avec fallback sur le socket */
 String _myUserIdOrFallback() {
   try {
     if (Get.isRegistered<UserController>()) {
@@ -210,7 +321,6 @@ class _AppLifecycleSpy with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     state = s;
-    // Pilotage de la visibilité (serveur FCM fallback quand hidden)
     if (s == AppLifecycleState.resumed) {
       _setVisibility(true);
     } else if (s == AppLifecycleState.paused ||
@@ -223,29 +333,23 @@ class _AppLifecycleSpy with WidgetsBindingObserver {
   static bool get isForeground => state == AppLifecycleState.resumed;
 }
 
-/* Envoie visible/hidden au backend + (dé)connexion socket en conséquence */
 void _setVisibility(bool visible) {
   try {
     if (!Get.isRegistered<UserController>()) return;
     final sock = Get.find<UserController>().socketService;
 
-    // notifier le backend
     sock.setVisibility(visible);
 
-    // Optionnel : couper/recréer le socket suivant l'état
     if (!visible) {
-      // on coupe 2s après (laisse le temps à un éventuel resume rapide)
       Future.delayed(const Duration(seconds: 2), () {
         try {
           if (!Get.isRegistered<UserController>()) return;
           final s = Get.find<UserController>().socketService;
-          // 🔧 SocketService n'a pas disconnect(): on utilise dispose()
           if (!_AppLifecycleSpy.isForeground && s.isConnected) s.dispose();
         } catch (_) {}
       });
     } else {
       if (!sock.isConnected) {
-        // Reconnexion: on lit userId / name depuis SharedPreferences
         SharedPreferences.getInstance().then((sp) {
           final uid = sp.getString('userId') ?? '';
           final name = sp.getString('name') ?? '';
@@ -258,7 +362,7 @@ void _setVisibility(bool visible) {
   } catch (_) {}
 }
 
-/* Notifie nativement (fullScreenIntent + sonnerie TEL) si l’app n’est pas au 1er plan */
+/* Notifie nativement si l’app n’est pas au 1er plan */
 Future<void> _maybeNotifyIfBackground({
   required String callId,
   required String callerId,
@@ -276,15 +380,15 @@ Future<void> _maybeNotifyIfBackground({
       'callerName': callerName,
       'callType': callType,
       'avatarUrl': _findAvatarFor(callerId) ?? '',
-      'callerPhone': _findPhoneFor(callerId) ?? '', // 👈 NEW
+      'callerPhone': _findPhoneFor(callerId) ?? '',
       'isGroup': isGroup,
-      'members': memberIds.join(','), // string
+      'members': memberIds.join(','),
       'recipientID': _myUserIdOrFallback(),
     });
   } catch (_) {}
 }
 
-/* ---------- 💡 BIND GLOBAL : appels entrants via Socket ---------- */
+/* ---------- BIND GLOBAL : appels entrants via Socket ---------- */
 void _bindSocketIncomingHandlers() {
   final userCtrl = Get.find<UserController>();
   final sock = userCtrl.socketService;
@@ -351,8 +455,7 @@ void _bindSocketIncomingHandlers() {
   // Groupe
   sock.onIncomingGroupCall =
       (callId, callerId, callerName, callType, members) {
-    debugPrint(
-        '[Socket][GLOBAL] incoming-GROUP $callerId ($callType) id=$callId');
+    debugPrint('[Socket][GLOBAL] incoming-GROUP $callerId ($callType) id=$callId');
 
     final myId = _myUserIdOrFallback();
     final ids = <String>[];
@@ -405,16 +508,14 @@ class _PendingCallAction {
 
 final List<_PendingCallAction> _pendingCallActions = [];
 
-/* ✅ VERSION FINALE : tient compte de sock.isConnected et résout le userId au flush */
+/* tient compte de sock.isConnected et résout le userId au flush */
 void _queueOrRunCallAction(String kind, String callId, String myId) {
   try {
     final sock = Get.find<UserController>().socketService;
 
-    // Résoudre mon userId maintenant si vide
     String resolvedMyId =
         (myId.trim().isNotEmpty) ? myId.trim() : sock.userId.trim();
 
-    // Si déjà connecté → on envoie tout de suite
     if (sock.isConnected) {
       if (resolvedMyId.isEmpty) resolvedMyId = sock.userId.trim();
       if (resolvedMyId.isEmpty) {
@@ -429,10 +530,8 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
       return;
     }
 
-    // Pas connecté → on file l’action (même si userId est vide, on le résoudra au flush)
     _pendingCallActions.add(_PendingCallAction(kind, callId, resolvedMyId));
 
-    // Au prochain "registered", on flush proprement la file
     final prev = sock.onRegistered;
     sock.onRegistered = () {
       try {
@@ -458,7 +557,7 @@ void _queueOrRunCallAction(String kind, String callId, String myId) {
   }
 }
 
-/* ===================== NOUVELLE VERSION ===================== */
+/* ===================== Navigation vers écran d'appel ===================== */
 void _doNavigateToIncoming(Map<String, dynamic> a) {
   try {
     final callerId = (a['callerId'] ?? '').toString();
@@ -494,7 +593,6 @@ void _doNavigateToIncoming(Map<String, dynamic> a) {
     final bool autoAccept = a['autoAccept'] == true;
     final bool autoReject = a['autoReject'] == true;
 
-    // ---- auto-reject depuis la notif ----
     if (autoReject) {
       if (callId.isNotEmpty && myId.isNotEmpty) {
         _queueOrRunCallAction('reject', callId, myId);
@@ -502,7 +600,6 @@ void _doNavigateToIncoming(Map<String, dynamic> a) {
       return;
     }
 
-    // ---- auto-accept depuis la notif ----
     if (autoAccept) {
       if (callId.isNotEmpty && myId.isNotEmpty) {
         _queueOrRunCallAction('accept', callId, myId);
@@ -539,7 +636,6 @@ void _doNavigateToIncoming(Map<String, dynamic> a) {
       return;
     }
 
-    // ---- chemin normal (écran slide To Accept/Reject) ----
     navigatorKey.currentState?.push(
       MaterialPageRoute(
         builder: (_) => IncomingCallScreen(
@@ -566,10 +662,11 @@ void _doNavigateToIncoming(Map<String, dynamic> a) {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 👇 observe le lifecycle pour savoir si l’app est au 1er plan ou non
   WidgetsBinding.instance.addObserver(_AppLifecycleSpy.I);
 
-  _setupIncomingCallChannel(); // ← écoute "incoming_call" (peut arriver très tôt)
+  _setupIncomingCallChannel();
+  _setupChatPushChannel();
+  _signalChatReadyResilient(); // 👈 NEW: annonce "prêt" (plusieurs pings)
 
   await Firebase.initializeApp();
   await _getFCMToken();
@@ -587,10 +684,9 @@ void main() async {
     ..put(ConversationApiService())
     ..put(MessageApiService())
     ..put(NotificationController())
-    // ❌ pas de SocketService ici (il est fourni par UserController et c'est un singleton)
     ..put(CallLogController(), permanent: true);
 
-  /* ---------- 🔗 BIND GLOBAL AVANT CONNEXION SOCKET ---------- */
+  /* ---------- BIND GLOBAL AVANT CONNEXION SOCKET ---------- */
   _bindSocketIncomingHandlers();
 
   /* ---------- thème / langue ---------- */
@@ -604,6 +700,17 @@ void main() async {
     init,
     onDidReceiveNotificationResponse: _onNotifTap,
   );
+
+  // cas “l’app a été lancée via une notif locale (payload)”
+  final launchDetails =
+      await flutterLocalNotificationsPlugin.getNotificationAppLaunchDetails();
+  if ((launchDetails?.didNotificationLaunchApp ?? false) &&
+      launchDetails?.notificationResponse?.payload != null) {
+    final payload = launchDetails!.notificationResponse!.payload!;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openConversationFromPayload(payload);
+    });
+  }
 
   /* ---------- permissions ---------- */
   await Get.find<NotificationController>().requestNotificationPermission();
@@ -622,15 +729,13 @@ void main() async {
   final name = prefs.getString('name') ?? '';
   if (uid.isNotEmpty && name.isNotEmpty) {
     final sock = Get.find<UserController>().socketService;
-    // (pas de _wirePendingToSocket ici — la file se branche elle-même via onRegistered)
     sock.connectAndRegister(uid, name);
   }
 
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  // ❌ NE PLUS ENREGISTRER le handler background Flutter pour Android
+  // FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  // 🔔 IMPORTANT : vider la file d’appels entrants dès que le 1er frame est rendu
   WidgetsBinding.instance.addPostFrameCallback((_) => _drainPendingIncoming());
-  // petit filet de sécurité
   Future.delayed(const Duration(milliseconds: 200), _drainPendingIncoming);
 
   runApp(MyApp(
@@ -639,41 +744,71 @@ void main() async {
   ));
 }
 
-/* tap sur notification locale (payload = id conv) */
-Future<void> _onNotifTap(NotificationResponse resp) async {
-  final payload = resp.payload;
-  if (payload == null) return;
+/* -------------------- OUVERTURE CONVERSATION -------------------- */
 
-  final convCtrl = Get.find<ConversationController>();
-  final usrCtrl = Get.find<UserController>();
-  final token = await usrCtrl.getToken();
-  if (token == null || token.isEmpty) return;
+// remplace seulement cette fonction dans ton main.dart
 
-  await convCtrl.refreshConversations(token);
+Future<void> _openConversationFromPayload(String conversationId, {int attempt = 0}) async {
+  // anti-boucle
+  if (attempt > 6) return;
 
-  final conv = convCtrl.conversations.firstWhere(
-    (c) => c.id == payload,
-    orElse: () => Conversation(
+  try {
+    final convCtrl = Get.find<ConversationController>();
+    final usrCtrl = Get.find<UserController>();
+
+    // token pas encore prêt ? réessaie un peu plus tard
+    final token = await usrCtrl.getToken();
+    if (token == null || token.isEmpty) {
+      Future.delayed(const Duration(milliseconds: 400),
+          () => _openConversationFromPayload(conversationId, attempt: attempt + 1));
+      return;
+    }
+
+    // recharge (peut prendre un peu de temps)
+    await convCtrl.refreshConversations(token);
+
+    // trouve la conv
+    final conv = convCtrl.conversations.firstWhere(
+      (c) => c.id == conversationId,
+      orElse: () => Conversation(
         id: '',
         createdAt: DateTime.now(),
         messagesIds: [],
         userIds: [],
         users: [],
-        messages: []),
-  );
-  if (conv.id.isEmpty) return;
+        messages: [],
+      ),
+    );
 
-  final selfId = usrCtrl.currentUser.value?.id;
-  final other = conv.users.firstWhere((u) => u.id != selfId,
-      orElse: () => throw Exception('user not found'));
+    // pas encore en mémoire ? réessaie
+    if (conv.id.isEmpty) {
+      Future.delayed(const Duration(milliseconds: 400),
+          () => _openConversationFromPayload(conversationId, attempt: attempt + 1));
+      return;
+    }
 
-  Get.to(() => ChatRoomPage(
-        conversationId: conv.id,
-        name: other.name,
-        phoneNumber: other.phoneNumber ?? '',
-        avatarUrl: other.image,
-        createdAt: other.createdAt,
-      ));
+    final selfId = usrCtrl.currentUser.value?.id;
+    final other = conv.users.firstWhere((u) => u.id != selfId,
+        orElse: () => throw Exception('user not found'));
+
+    Get.to(() => ChatRoomPage(
+          conversationId: conv.id,
+          name: other.name,
+          phoneNumber: other.phoneNumber ?? '',
+          avatarUrl: other.image,
+          createdAt: other.createdAt,
+        ));
+  } catch (e) {
+    // sécurité: petit retry si quelque chose n’est pas prêt
+    Future.delayed(const Duration(milliseconds: 400),
+        () => _openConversationFromPayload(conversationId, attempt: attempt + 1));
+  }
+}
+
+Future<void> _onNotifTap(NotificationResponse resp) async {
+  final payload = resp.payload;
+  if (payload == null) return;
+  await _openConversationFromPayload(payload);
 }
 
 /* ------------------------------------------------------------------ */
@@ -689,6 +824,9 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 👇 Extra-sécurité : on re-ping dès que le 1er frame est prêt
+    WidgetsBinding.instance.addPostFrameCallback((_) => _announceChatReady());
+
     return Obx(() => GetMaterialApp(
           navigatorKey: navigatorKey,
           debugShowCheckedModeBanner: false,

@@ -25,16 +25,26 @@ import com.google.firebase.messaging.RemoteMessage;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
 
+/**
+ * ⚠️ NE TOUCHE PAS À LA PARTIE "CALLS" — ajout propre de la partie "chat_message"
+ */
 public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
-    static final String CHANNEL_ID = "calls";
-    private static boolean channelEnsured = false;
+    /* ======== CANAUX ======== */
+    static final String CHANNEL_ID_CALLS = "calls";
+    static final String CHANNEL_ID_MSG   = "messages";
+    private static boolean callChannelEnsured = false;
+    private static boolean msgChannelEnsured  = false;
 
+    /* ======== INTENTS APPELS ======== */
     public static final String ACTION_ACCEPT          = "com.elite.bcalio.ACTION_ACCEPT_CALL";
     public static final String ACTION_REJECT          = "com.elite.bcalio.ACTION_REJECT_CALL";
     public static final String ACTION_TIMEOUT         = "com.elite.bcalio.ACTION_TIMEOUT_CALL";
-    // Utilisé si l’utilisateur “swipe” la notif d’appel entrant
     public static final String ACTION_INCOMING_DELETE = "com.elite.bcalio.ACTION_INCOMING_DELETE";
 
     private static final long MISSED_CALL_AFTER_MS = 30_000L;
@@ -43,8 +53,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     private static String KEY_ID(String callId)     { return "id_" + callId; }
     private static String KEY_NAME(String callId)   { return "n_" + callId; }
     private static String KEY_AVA(String callId)    { return "a_" + callId; }
-    private static String KEY_PHONE(String callId)  { return "p_" + callId; } // 👈 NEW
-    // 👇 statut local pour bloquer les "manqués" tardifs
+    private static String KEY_PHONE(String callId)  { return "p_" + callId; }
     private static String KEY_STATUS(String callId) { return "s_" + callId; }
     private static final String STATUS_ACCEPTED = "accepted";
     private static final String STATUS_REJECTED = "rejected";
@@ -56,27 +65,34 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         String type = msg.getData().get("type");
         if (type == null) return;
 
-        if ("incoming_call".equals(type)) {
-            handleIncomingCall(msg);
-        } else if ("call_cancel".equals(type)) {
-            handleCallCancelOrTimeout(msg);
-        } else if ("call_timeout".equals(type)) {
-            handleCallCancelOrTimeout(msg);
+        switch (type) {
+            case "incoming_call":
+                handleIncomingCall(msg);
+                break;
+            case "call_cancel":
+            case "call_timeout":
+                handleCallCancelOrTimeout(msg);
+                break;
+            case "chat_message": // 👈 NEW
+                handleChatMessage(msg);
+                break;
         }
     }
 
+    /* =========================================================
+     * ======================  CALLS  ==========================
+     * ========================================================= */
     private void handleIncomingCall(RemoteMessage msg) {
         String callId      = orEmpty(msg.getData().get("callId"));
         String callerId    = orEmpty(msg.getData().get("callerId"));
         String callerName  = orEmpty(msg.getData().get("callerName"));
         String callType    = orEmpty(msg.getData().get("callType"));
         String avatarUrl   = orEmpty(msg.getData().get("avatarUrl"));
-        String callerPhone = orEmpty(msg.getData().get("callerPhone")); // 👈 NEW
+        String callerPhone = orEmpty(msg.getData().get("callerPhone"));
         boolean isGroup    = "1".equals(msg.getData().get("isGroup")) || "true".equalsIgnoreCase(orEmpty(msg.getData().get("isGroup")));
         String members     = orEmpty(msg.getData().get("members"));
 
-        // méta pour fallback (cancel/timeout ultérieur)
-        saveCallMeta(callId, callerId, callerName, avatarUrl, callerPhone); // 👈 save phone
+        saveCallMeta(callId, callerId, callerName, avatarUrl, callerPhone);
 
         Bundle b = new Bundle();
         b.putString("callId", callId);
@@ -84,19 +100,17 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         b.putString("callerName", callerName);
         b.putString("callType", callType);
         b.putString("avatarUrl", avatarUrl);
-        b.putString("callerPhone", callerPhone); // 👈 NEW
+        b.putString("callerPhone", callerPhone);
         b.putBoolean("isGroup", isGroup);
         b.putString("members", members);
         b.putString("recipientID", "");
 
-        // 🟢 App AU PREMIER PLAN → pas de notif système, pas d’alarme. On livre juste à Flutter.
         if (MainActivity.isInForeground()) {
             MainActivity.enqueueIncomingCall(b);
             return;
         }
 
-        // 🟠 App en arrière-plan → notif + alarme timeout
-        ensureCallsChannelWithRingtone(CHANNEL_ID);
+        ensureCallsChannelWithRingtone(CHANNEL_ID_CALLS);
 
         Intent inCall = new Intent(this, IncomingCallActivity.class)
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -119,11 +133,11 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         String displayName = (callerName == null || callerName.trim().isEmpty()) ? "Inconnu" : callerName;
         String phoneOrId   = (callerPhone == null || callerPhone.trim().isEmpty()) ? callerId : callerPhone;
 
-        NotificationCompat.Builder nb = new NotificationCompat.Builder(this, CHANNEL_ID)
+        NotificationCompat.Builder nb = new NotificationCompat.Builder(this, CHANNEL_ID_CALLS)
                 .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                 .setContentTitle(title)
-                .setContentText(displayName) // collapsed
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + phoneOrId)) // 👈 name + number
+                .setContentText(displayName)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + phoneOrId))
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setOngoing(true)
@@ -142,12 +156,9 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         nm.notify(notificationId(callId), n);
 
         scheduleTimeoutAlarm(callId, b);
-
-        // Si l’app revient au 1er plan, Flutter saura afficher l’écran
         MainActivity.enqueueIncomingCall(b);
     }
 
-    /** Affiche "Appel manqué" SAUF si déjà accepté / rejeté localement. */
     private void handleCallCancelOrTimeout(RemoteMessage msg) {
         String callId = orEmpty(msg.getData().get("callId"));
         if (callId.isEmpty()) return;
@@ -155,7 +166,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         cancelTimeoutAlarm(callId);
 
         SharedPreferences sp = getSharedPreferences(PREFS_CALLS, MODE_PRIVATE);
-        // 🚫 Bloque les "manqués" tardifs si l’appel a été accepté ou rejeté
         String st = sp.getString(KEY_STATUS(callId), "");
         if (STATUS_ACCEPTED.equals(st) || STATUS_REJECTED.equals(st)) {
             cancelNotification(callId);
@@ -163,16 +173,15 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
             return;
         }
 
-        // Sinon, on affiche bien "Appel manqué"
         String callerId    = orEmpty(msg.getData().get("callerId"));
         String callerName  = orEmpty(msg.getData().get("callerName"));
         String avatarUrl   = orEmpty(msg.getData().get("avatarUrl"));
-        String callerPhone = orEmpty(msg.getData().get("callerPhone")); // peut être vide
+        String callerPhone = orEmpty(msg.getData().get("callerPhone"));
         if (callerId.isEmpty() || callerName.isEmpty() || avatarUrl.isEmpty() || callerPhone.isEmpty()) {
             if (callerId.isEmpty())    callerId    = orEmpty(sp.getString(KEY_ID(callId),   ""));
             if (callerName.isEmpty())  callerName  = orEmpty(sp.getString(KEY_NAME(callId), ""));
             if (avatarUrl.isEmpty())   avatarUrl   = orEmpty(sp.getString(KEY_AVA(callId),  ""));
-            if (callerPhone.isEmpty()) callerPhone = orEmpty(sp.getString(KEY_PHONE(callId),"")); // 👈 fallback
+            if (callerPhone.isEmpty()) callerPhone = orEmpty(sp.getString(KEY_PHONE(callId),""));
         }
 
         cancelNotification(callId);
@@ -182,7 +191,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         b.putString("callerId", callerId);
         b.putString("callerName", callerName);
         b.putString("avatarUrl", avatarUrl);
-        b.putString("callerPhone", callerPhone); // 👈 NEW
+        b.putString("callerPhone", callerPhone);
 
         Intent br = new Intent(this, CallActionReceiver.class)
                 .setAction(ACTION_TIMEOUT)
@@ -220,6 +229,161 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         if (am != null) am.cancel(pi);
     }
 
+    /* =========================================================
+     * ===================  CHAT MESSAGES  =====================
+     * ========================================================= */
+    private void handleChatMessage(RemoteMessage msg) {
+        // 👉 n’affiche la notif que si l’app n’est PAS au 1er plan
+        if (MainActivity.isInForeground()) return;
+
+        String roomId      = orEmpty(msg.getData().get("roomId"));
+        String messageId   = orEmpty(msg.getData().get("messageId"));
+        String fromId      = orEmpty(msg.getData().get("fromId"));
+        String fromName    = orEmpty(msg.getData().get("fromName"));
+        String avatarUrl   = orEmpty(msg.getData().get("avatarUrl"));
+        String text        = orEmpty(msg.getData().get("text"));
+        String sentAt      = orEmpty(msg.getData().get("sentAt"));
+        String contentType = orEmpty(msg.getData().get("contentType")); // "text" | "image" | "audio" | "video"
+        boolean isGroup    = "1".equals(orEmpty(msg.getData().get("isGroup"))) || "true".equalsIgnoreCase(orEmpty(msg.getData().get("isGroup")));
+
+        ensureMessagesChannel(CHANNEL_ID_MSG);
+
+        // Intent → MainActivity avec extras “open_chat”
+        Intent openChat = new Intent(this, MainActivity.class)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        openChat.putExtra("push_kind", "chat");
+        openChat.putExtra("roomId", roomId);
+        openChat.putExtra("messageId", messageId);
+        openChat.putExtra("fromId", fromId);
+        openChat.putExtra("fromName", fromName);
+        openChat.putExtra("avatarUrl", avatarUrl);
+        openChat.putExtra("text", text);
+        openChat.putExtra("contentType", contentType);
+        openChat.putExtra("isGroup", isGroup);
+
+        PendingIntent contentPI = PendingIntent.getActivity(
+                this,
+                roomId.hashCode() ^ 777,
+                openChat,
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                        ? (PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)
+                        : PendingIntent.FLAG_UPDATE_CURRENT
+        );
+
+        // Titre + contenu
+        String title = (fromName == null || fromName.trim().isEmpty()) ? "Nouveau message" : fromName;
+        String displayContent;
+        switch ((contentType == null ? "" : contentType)) {
+            case "image": displayContent = "📷 Photo"; break;
+            case "audio": displayContent = "🎤 Message vocal"; break;
+            case "video": displayContent = "🎬 Vidéo"; break;
+            default:
+                displayContent = (text == null || text.trim().isEmpty()) ? "Nouveau message" : text;
+        }
+
+        NotificationCompat.Builder nb = new NotificationCompat.Builder(this, CHANNEL_ID_MSG)
+                .setSmallIcon(getSmallIconForMessages())
+                .setContentTitle(title)
+                .setContentText(displayContent)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setAutoCancel(true)
+                .setContentIntent(contentPI);
+
+        // avatar en largeIcon
+        Bitmap large = tryLoadBitmap(avatarUrl);
+        if (large != null) nb.setLargeIcon(large);
+
+        // Big styles
+        if ("image".equals(contentType)) {
+            Bitmap picture = tryLoadBitmap(text /* parfois text contient l’URL de l’image */);
+            if (picture != null) {
+                nb.setStyle(new NotificationCompat.BigPictureStyle()
+                        .bigPicture(picture)
+                        .bigLargeIcon((Bitmap) null) // ← fix: l’overload n’est plus ambigu
+                        .setSummaryText(title));
+            } else {
+                nb.setStyle(new NotificationCompat.BigTextStyle().bigText(displayContent));
+            }
+        } else if ("text".equals(contentType) || contentType.isEmpty()) {
+            nb.setStyle(new NotificationCompat.BigTextStyle().bigText(displayContent));
+        }
+
+        // Horodatage (si fourni) — sans javax.xml.bind
+        long when = parseIsoWhen(sentAt);
+        if (when > 0L) {
+            nb.setWhen(when);
+            nb.setShowWhen(true);
+        }
+
+        // Groupe par conversation
+        nb.setGroup("chat_" + roomId);
+
+        Notification n = nb.build();
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        nm.notify(notificationId("chat:" + roomId), n);
+    }
+
+    /* ====================== Helpers communs ====================== */
+
+    private void ensureCallsChannelWithRingtone(String id) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (callChannelEnsured) return;
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+
+            NotificationChannel existing = nm.getNotificationChannel(id);
+            if (existing != null) nm.deleteNotificationChannel(id);
+
+            NotificationChannel ch = new NotificationChannel(
+                    id, "Incoming Calls", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("Incoming call notifications");
+            ch.enableLights(true);
+            ch.setLightColor(Color.GREEN);
+            ch.enableVibration(true);
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+            ch.setSound(ringUri, attrs);
+
+            nm.createNotificationChannel(ch);
+            callChannelEnsured = true;
+        }
+    }
+
+    private void ensureMessagesChannel(String id) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (msgChannelEnsured) return;
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+
+            NotificationChannel ch = new NotificationChannel(
+                    id, "Messages", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("Notifications de messages");
+            ch.enableLights(true);
+            ch.setLightColor(Color.CYAN);
+            ch.enableVibration(true);
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+            // sonnerie par défaut (différente de l'appel)
+            Uri def = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            ch.setSound(def, attrs);
+
+            nm.createNotificationChannel(ch);
+            msgChannelEnsured = true;
+        }
+    }
+
+    private int getSmallIconForMessages() {
+        // idéalement, un icône monochrome; à défaut, le launcher
+        return getApplicationInfo().icon != 0 ? getApplicationInfo().icon : android.R.drawable.stat_notify_more;
+    }
+
     private Bitmap tryLoadBitmap(String url) {
         if (url == null || url.trim().isEmpty()) return null;
         HttpURLConnection conn = null;
@@ -246,8 +410,8 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
         nm.cancel(notificationId(callId));
     }
 
-    private int notificationId(String callId) {
-        return callId == null ? 0 : callId.hashCode();
+    private int notificationId(String key) {
+        return key == null ? 0 : key.hashCode();
     }
 
     private int requestCodeFor(String callId, int salt) {
@@ -267,33 +431,6 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
 
     private String orEmpty(String s) { return s == null ? "" : s; }
 
-    private void ensureCallsChannelWithRingtone(String id) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (channelEnsured) return;
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
-            AudioAttributes attrs = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build();
-
-            NotificationChannel existing = nm.getNotificationChannel(id);
-            if (existing != null) nm.deleteNotificationChannel(id);
-
-            NotificationChannel ch = new NotificationChannel(
-                    id, "Incoming Calls", NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("Incoming call notifications");
-            ch.enableLights(true);
-            ch.setLightColor(Color.GREEN);
-            ch.enableVibration(true);
-            ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-            ch.setSound(ringUri, attrs);
-
-            nm.createNotificationChannel(ch);
-            channelEnsured = true;
-        }
-    }
-
     private void saveCallMeta(String callId, String callerId, String callerName, String avatarUrl, String callerPhone) {
         if (callId == null || callId.isEmpty()) return;
         SharedPreferences sp = getSharedPreferences(PREFS_CALLS, MODE_PRIVATE);
@@ -301,7 +438,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
           .putString(KEY_ID(callId),    callerId    == null ? "" : callerId)
           .putString(KEY_NAME(callId),  callerName  == null ? "" : callerName)
           .putString(KEY_AVA(callId),   avatarUrl   == null ? "" : avatarUrl)
-          .putString(KEY_PHONE(callId), callerPhone == null ? "" : callerPhone) // 👈 NEW
+          .putString(KEY_PHONE(callId), callerPhone == null ? "" : callerPhone)
           .apply();
     }
 
@@ -312,8 +449,80 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
           .remove(KEY_ID(callId))
           .remove(KEY_NAME(callId))
           .remove(KEY_AVA(callId))
-          .remove(KEY_STATUS(callId)) // nettoie aussi le statut
-          .remove(KEY_PHONE(callId))  // 👈 NEW
+          .remove(KEY_STATUS(callId))
+          .remove(KEY_PHONE(callId))
           .apply();
+    }
+
+    /* ===================== Date parsing sans javax.xml.bind ===================== */
+
+    /**
+     * Parse un ISO-8601 / timestamp en millis (UTC) si possible.
+     * Accepte:
+     *  - "2024-09-01T12:34:56Z"
+     *  - "2024-09-01T12:34:56.789Z"
+     *  - "2024-09-01T12:34:56+01:00" (ou -03:30)
+     *  - timestamp numérique (en s ou ms)
+     * Retourne 0 si non parsable.
+     */
+    private long parseIsoWhen(String sentAt) {
+        try {
+            if (sentAt == null) return 0L;
+            String s = sentAt.trim();
+            if (s.isEmpty()) return 0L;
+
+            // Timestamp numérique ?
+            try {
+                long v = Long.parseLong(s);
+                if (v > 100000000000L) return v;       // déjà en ms
+                if (v > 0L) return v * 1000L;          // en secondes
+            } catch (NumberFormatException ignore) {}
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    // OffsetDateTime gère Z et +hh:mm
+                    java.time.OffsetDateTime odt = java.time.OffsetDateTime.parse(s);
+                    return odt.toInstant().toEpochMilli();
+                } catch (Throwable t) {
+                    // essai ZonedDateTime (certains backends)
+                    try {
+                        java.time.ZonedDateTime zdt = java.time.ZonedDateTime.parse(s);
+                        return zdt.toInstant().toEpochMilli();
+                    } catch (Throwable ignore) {}
+                }
+            }
+
+            // Compat <26 via SimpleDateFormat
+            return parseIsoCompat(s);
+        } catch (Throwable t) {
+            return 0L;
+        }
+    }
+
+    private long parseIsoCompat(String iso) {
+        try {
+            String s = iso.trim();
+
+            // Normalise "+hh:mm" → "+hhmm" pour SimpleDateFormat
+            if (s.matches(".*[+-]\\d\\d:\\d\\d$")) {
+                s = s.replaceAll("([+-]\\d\\d):(\\d\\d)$", "$1$2");
+            }
+
+            boolean endsWithZ  = s.endsWith("Z");
+            boolean hasMillis  = s.contains(".");
+
+            SimpleDateFormat fmt;
+            if (endsWithZ) {
+                fmt = new SimpleDateFormat(hasMillis ? "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'" : "yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
+                fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+            } else {
+                fmt = new SimpleDateFormat(hasMillis ? "yyyy-MM-dd'T'HH:mm:ss.SSSZ" : "yyyy-MM-dd'T'HH:mm:ssZ", Locale.US);
+            }
+
+            Date d = fmt.parse(s);
+            return d != null ? d.getTime() : 0L;
+        } catch (Throwable t) {
+            return 0L;
+        }
     }
 }

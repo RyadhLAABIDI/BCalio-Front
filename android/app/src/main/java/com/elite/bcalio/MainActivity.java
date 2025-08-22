@@ -36,19 +36,37 @@ import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 
+/**
+ * Corrigé :
+ * - reset des canaux/états statiques lors du detach de l’engine (cleanUpFlutterEngine)
+ * - flag engineReady
+ * - mise en file si pas prêt + try/catch autour des invokeMethod
+ */
 public class MainActivity extends FlutterActivity {
 
     public static final String CHANNEL = "incoming_calls";
+    public static final String CHAT_CHANNEL = "chat_notifications";
     private static final String CALLS_CHANNEL_ID = "calls";
 
     private static MethodChannel channel;
+    private static MethodChannel chatChannel;
+
     private static final List<Bundle> pendingCalls = new ArrayList<>();
+    private static final List<Bundle> pendingChats = new ArrayList<>();
+
     private static final Set<String> handledCallIds = new HashSet<>();
 
+    // --- états runtime ---
     private static volatile boolean inForeground = false;
-    public static boolean isInForeground() { return inForeground; }
+    public  static boolean isInForeground() { return inForeground; }
 
-    // ---- statut local pour bloquer les "manqués" tardifs ----
+    // NEW: engine prêt ? (canal valide ?)
+    private static volatile boolean engineReady = false;
+
+    // NEW: Dart (côté Flutter) a-t-il dit qu’il est prêt à recevoir "open_chat_from_push" ?
+    private static volatile boolean chatDartReady = false;
+
+    // ---- statut local pour bloquer les "manqués" tardifs (appels) ----
     private static final String PREFS_CALLS = "bcalio_calls";
     private static String KEY_STATUS(String callId) { return "s_" + callId; }
     private static final String STATUS_ACCEPTED = "accepted";
@@ -59,7 +77,6 @@ public class MainActivity extends FlutterActivity {
         ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE)
                 .edit().putString(KEY_STATUS(callId), STATUS_ACCEPTED).apply();
     }
-
     private static void markRejected(Context ctx, String callId) {
         if (callId == null || callId.isEmpty()) return;
         ctx.getSharedPreferences(PREFS_CALLS, Context.MODE_PRIVATE)
@@ -70,6 +87,8 @@ public class MainActivity extends FlutterActivity {
         return b != null ? b.getString("callId", "") : "";
     }
 
+    /* ====================== APPELS ====================== */
+
     private static void deliverToFlutter(Bundle bundle) {
         if (bundle == null) return;
         String callId = extractCallId(bundle);
@@ -77,9 +96,7 @@ public class MainActivity extends FlutterActivity {
 
         synchronized (handledCallIds) {
             boolean isAction = bundle.getBoolean("autoAccept", false) || bundle.getBoolean("autoReject", false);
-            if (handledCallIds.contains(callId) && !isAction) {
-                return;
-            }
+            if (handledCallIds.contains(callId) && !isAction) return;
             handledCallIds.add(callId);
         }
 
@@ -94,10 +111,17 @@ public class MainActivity extends FlutterActivity {
         args.put("members",    bundle.getString("members", "[]"));
         args.put("autoAccept", bundle.getBoolean("autoAccept", false));
         args.put("autoReject", bundle.getBoolean("autoReject", false));
-        args.put("callerPhone",bundle.getString("callerPhone","")); // 👈 NEW (utile si tu l’affiches côté Flutter)
+        args.put("callerPhone",bundle.getString("callerPhone",""));
 
-        if (channel != null) {
+        if (!engineReady || channel == null) {
+            synchronized (pendingCalls) { pendingCalls.add(bundle); }
+            return;
+        }
+        try {
             channel.invokeMethod("incoming_call", args);
+        } catch (Throwable t) {
+            // si ça plante (mauvais messenger), on re-queue
+            synchronized (pendingCalls) { pendingCalls.add(bundle); }
         }
     }
 
@@ -105,12 +129,10 @@ public class MainActivity extends FlutterActivity {
         if (bundle == null) return;
         String callId = extractCallId(bundle);
 
-        if (channel == null) {
+        if (!engineReady || channel == null) {
             synchronized (pendingCalls) {
                 for (Bundle b : pendingCalls) {
-                    if (extractCallId(b).equals(callId)) {
-                        return;
-                    }
+                    if (extractCallId(b).equals(callId)) return;
                 }
                 pendingCalls.add(bundle);
             }
@@ -119,7 +141,7 @@ public class MainActivity extends FlutterActivity {
         deliverToFlutter(bundle);
     }
 
-    private static void flushPending() {
+    private static void flushPendingCalls() {
         List<Bundle> copy;
         synchronized (pendingCalls) {
             copy = new ArrayList<>(pendingCalls);
@@ -128,14 +150,51 @@ public class MainActivity extends FlutterActivity {
         for (Bundle b : copy) deliverToFlutter(b);
     }
 
+    /* ====================== CHAT ====================== */
+
+    private static void deliverChatToFlutter(Bundle bundle) {
+        if (bundle == null) return;
+        if (!engineReady || chatChannel == null || !chatDartReady) {
+            synchronized (pendingChats) { pendingChats.add(bundle); }
+            return;
+        }
+        Map<String, Object> args = new HashMap<>();
+        args.put("roomId",     bundle.getString("roomId", ""));
+        args.put("messageId",  bundle.getString("messageId", ""));
+        args.put("fromId",     bundle.getString("fromId", ""));
+        args.put("fromName",   bundle.getString("fromName", ""));
+        args.put("avatarUrl",  bundle.getString("avatarUrl", ""));
+        args.put("text",       bundle.getString("text", ""));
+        args.put("contentType",bundle.getString("contentType", "text"));
+        args.put("isGroup",    bundle.getBoolean("isGroup", false));
+
+        try {
+            chatChannel.invokeMethod("open_chat_from_push", args);
+        } catch (Throwable t) {
+            // messenger invalide => re-queue et on attend le nouvel engine
+            synchronized (pendingChats) { pendingChats.add(bundle); }
+        }
+    }
+
+    private static void flushPendingChats() {
+        List<Bundle> copy;
+        synchronized (pendingChats) {
+            copy = new ArrayList<>(pendingChats);
+            pendingChats.clear();
+        }
+        for (Bundle b : copy) deliverChatToFlutter(b);
+    }
+
     /* ======== Sonnerie native pour le destinataire (MethodChannel 'call_sounds') ======== */
     private static Ringtone sIncomingTone;
 
     @Override
     public void configureFlutterEngine(@NonNull FlutterEngine flutterEngine) {
         super.configureFlutterEngine(flutterEngine);
+        engineReady = true;       // NEW: l’engine est prêt
+        // on ne met PAS chatDartReady à true ici: on attend le ping Dart
 
-        // Canal pour les événements d'appel entrant -> Flutter
+        // Canal APPELS
         channel = new MethodChannel(
                 flutterEngine.getDartExecutor().getBinaryMessenger(),
                 CHANNEL
@@ -153,12 +212,11 @@ public class MainActivity extends FlutterActivity {
                         b.putString("callerName",  safeStr(m.get("callerName")));
                         b.putString("callType",    safeStr(m.get("callType")));
                         b.putString("avatarUrl",   safeStr(m.get("avatarUrl")));
-                        b.putString("callerPhone", safeStr(m.get("callerPhone"))); // 👈 NEW
+                        b.putString("callerPhone", safeStr(m.get("callerPhone")));
                         b.putBoolean("isGroup",   "1".equals(safeStr(m.get("isGroup"))) || Boolean.TRUE.equals(m.get("isGroup")));
                         b.putString("members",    safeStr(m.get("members")));
                         b.putString("recipientID",safeStr(m.get("recipientID")));
 
-                        // si (par sécurité) on est déjà au 1er plan → ne pas afficher la notif
                         if (MainActivity.isInForeground()) {
                             enqueueIncomingCall(b);
                             result.success(true);
@@ -167,7 +225,6 @@ public class MainActivity extends FlutterActivity {
 
                         showIncomingCallNotification(MainActivity.this, b);
                         enqueueIncomingCall(b);
-
                         result.success(true);
                     } catch (Exception e) {
                         result.error("ERR", e.getMessage(), null);
@@ -175,14 +232,11 @@ public class MainActivity extends FlutterActivity {
                     return;
                 }
 
-                // Actions UI (depuis l’écran Flutter)
                 if ("ui_accept".equals(call.method)) {
                     try {
                         Map<String, Object> m = (Map<String, Object>) call.arguments;
                         String callId = safeStr(m.get("callId"));
-                        // ✅ 1) marquer accepté pour bloquer "manqué" tardif
                         markAccepted(MainActivity.this, callId);
-                        // ✅ 2) coupe timer + ferme notif
                         cancelIncomingById(MainActivity.this, callId);
                         result.success(true);
                     } catch (Exception e) {
@@ -198,23 +252,19 @@ public class MainActivity extends FlutterActivity {
                         String callerId = safeStr(m.get("callerId"));
                         String callerName = safeStr(m.get("callerName"));
                         String avatarUrl = safeStr(m.get("avatarUrl"));
-                        String callerPhone = safeStr(m.get("callerPhone")); // peut être vide
+                        String callerPhone = safeStr(m.get("callerPhone"));
 
-                        // ✅ marquer rejeté (empêche "Appel manqué" via FCM ensuite)
                         markRejected(MainActivity.this, callId);
-                        // ✅ coupe timer + ferme notif
                         cancelIncomingById(MainActivity.this, callId);
 
-                        // 👉 Pas de notif "Appel refusé" quand on est dans l’app
                         if (!MainActivity.isInForeground()) {
                             Bundle b = new Bundle();
                             b.putString("callId", callId);
                             b.putString("callerId", callerId);
                             b.putString("callerName", callerName);
                             b.putString("avatarUrl", avatarUrl);
-                            b.putString("callerPhone", callerPhone); // 👈 NEW
+                            b.putString("callerPhone", callerPhone);
 
-                            // On conserve l’affichage "Appel refusé" via le receiver (cas background)
                             Intent br = new Intent(MainActivity.this, CallActionReceiver.class)
                                     .setAction(MyFirebaseMessagingService.ACTION_REJECT)
                                     .putExtras(b);
@@ -229,7 +279,6 @@ public class MainActivity extends FlutterActivity {
                 }
 
                 if ("ui_timeout".equals(call.method)) {
-                    // Fallback UI (B n’a pas répondu côté Flutter) → juste annuler notif/alarme
                     try {
                         Map<String, Object> m = (Map<String, Object>) call.arguments;
                         String callId = safeStr(m.get("callId"));
@@ -257,7 +306,7 @@ public class MainActivity extends FlutterActivity {
             }
         });
 
-        // Canal pour la sonnerie TEL côté destinataire
+        // Canal sonnerie TEL
         MethodChannel callSounds = new MethodChannel(
                 flutterEngine.getDartExecutor().getBinaryMessenger(),
                 "call_sounds"
@@ -301,45 +350,91 @@ public class MainActivity extends FlutterActivity {
             }
         });
 
-        flushPending();
+        // Canal CHAT
+        chatChannel = new MethodChannel(
+                flutterEngine.getDartExecutor().getBinaryMessenger(),
+                CHAT_CHANNEL
+        );
+        chatChannel.setMethodCallHandler((call, result) -> {
+            if ("chat_ready".equals(call.method)) {
+                chatDartReady = true;
+                flushPendingChats();   // Dart prêt => vider la file
+                result.success(true);
+                return;
+            }
+            result.notImplemented();
+        });
+
+        // Maintenant que l’engine est prêt, on peut vider les files
+        flushPendingCalls();
+        // ⚠ pendingChats sera vidé à la réception de "chat_ready"
     }
 
-    private static String safeStr(Object o) {
-        return (o == null) ? "" : String.valueOf(o);
+    // NEW: reset propre lors du detach de l’engine
+    @Override
+    public void cleanUpFlutterEngine(@NonNull FlutterEngine flutterEngine) {
+        super.cleanUpFlutterEngine(flutterEngine);
+        engineReady   = false;
+        chatDartReady = false;
+        channel       = null;
+        chatChannel   = null;
     }
+
+    private static String safeStr(Object o) { return (o == null) ? "" : String.valueOf(o); }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // on repart “propre”
+        chatDartReady = false;
+
         Intent it = getIntent();
-        if (it != null && it.getExtras() != null) enqueueIncomingCall(it.getExtras());
+        if (it != null) {
+            maybeDeliverChatFromIntent(it);
+            if (it.getExtras() != null && it.getExtras().containsKey("callId")) {
+                enqueueIncomingCall(it.getExtras());
+            }
+        }
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        inForeground = true;
-    }
-
-    @Override
-    protected void onPause() {
-        inForeground = false;
-        super.onPause();
-    }
+    @Override protected void onResume() { super.onResume(); inForeground = true; }
+    @Override protected void onPause()  { inForeground = false; super.onPause(); }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        Bundle extras = intent.getExtras();
-        if (extras != null) enqueueIncomingCall(extras);
+        if (intent != null) {
+            maybeDeliverChatFromIntent(intent);
+            Bundle extras = intent.getExtras();
+            if (extras != null && extras.containsKey("callId")) {
+                enqueueIncomingCall(extras);
+            }
+        }
+    }
+
+    /* chat: si l’intent vient d’une notif, forward à Flutter (ou queue si pas prêt) */
+    private void maybeDeliverChatFromIntent(Intent intent) {
+        if (intent == null) return;
+        String kind = intent.getStringExtra("push_kind");
+        if (!"chat".equals(kind)) return;
+
+        Bundle b = new Bundle();
+        b.putString("roomId",     intent.getStringExtra("roomId"));
+        b.putString("messageId",  intent.getStringExtra("messageId"));
+        b.putString("fromId",     intent.getStringExtra("fromId"));
+        b.putString("fromName",   intent.getStringExtra("fromName"));
+        b.putString("avatarUrl",  intent.getStringExtra("avatarUrl"));
+        b.putString("text",       intent.getStringExtra("text"));
+        b.putString("contentType",intent.getStringExtra("contentType"));
+        b.putBoolean("isGroup",   intent.getBooleanExtra("isGroup", false));
+
+        deliverChatToFlutter(b); // la méthode gère toute la logique “queue si pas prêt”
     }
 
     private static int notificationIdFor(String callId) {
         return (callId == null) ? 0 : callId.hashCode();
     }
-
-    // ===== Helpers notif / timer =====
 
     private static int requestCodeFor(String callId, int salt) {
         int base = (callId == null ? 0 : callId.hashCode());
@@ -350,7 +445,6 @@ public class MainActivity extends FlutterActivity {
     static void cancelIncomingById(Context ctx, String callId) {
         if (callId == null || callId.isEmpty()) return;
 
-        // Annuler l'AlarmManager (ACTION_TIMEOUT)
         Intent i = new Intent(ctx, CallActionReceiver.class)
                 .setAction(MyFirebaseMessagingService.ACTION_TIMEOUT);
         PendingIntent pi = PendingIntent.getBroadcast(
@@ -364,14 +458,13 @@ public class MainActivity extends FlutterActivity {
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am != null) am.cancel(pi);
 
-        // Fermer la notif "ringing"
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         nm.cancel(notificationIdFor(callId));
     }
 
-    private static void ensureCallsChannelWithRingtone(Context ctx) {
+    private static void ensureCallsChannelWithRingtone(Activity act) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            NotificationManager nm = (NotificationManager) act.getSystemService(Context.NOTIFICATION_SERVICE);
             NotificationChannel existing = nm.getNotificationChannel(CALLS_CHANNEL_ID);
             if (existing != null) nm.deleteNotificationChannel(CALLS_CHANNEL_ID);
 
@@ -394,7 +487,6 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
-    /** Charge un bitmap local UNIQUEMENT (content://, file://, /…) */
     private static Bitmap tryLoadBitmapLocal(Context ctx, String uriOrPath) {
         if (uriOrPath == null || uriOrPath.trim().isEmpty()) return null;
         try {
@@ -415,7 +507,6 @@ public class MainActivity extends FlutterActivity {
         return null;
     }
 
-    /** DL (simple) d’un bitmap distant http(s) */
     private static Bitmap tryLoadBitmapRemote(String url) {
         if (url == null || url.trim().isEmpty()) return null;
         HttpURLConnection conn = null;
@@ -436,11 +527,9 @@ public class MainActivity extends FlutterActivity {
         return null;
     }
 
-    /** Pose le largeIcon (local immédiat) ou via MAJ asynchrone s’il est http(s) */
     private static void applyLargeIconIfAny(Activity act, String avatarUrl, int notifId, NotificationCompat.Builder nb) {
         if (avatarUrl == null || avatarUrl.trim().isEmpty()) return;
 
-        // local ?
         Bitmap local = tryLoadBitmapLocal(act, avatarUrl);
         if (local != null) {
             nb.setLargeIcon(local);
@@ -449,7 +538,6 @@ public class MainActivity extends FlutterActivity {
             return;
         }
 
-        // distant ?
         if (avatarUrl.startsWith("http")) {
             new Thread(() -> {
                 Bitmap remote = tryLoadBitmapRemote(avatarUrl);
@@ -462,14 +550,13 @@ public class MainActivity extends FlutterActivity {
         }
     }
 
-    /** Notif locale (quand Socket reçoit en background). */
     private static void showIncomingCallNotification(Activity activity, Bundle b) {
         ensureCallsChannelWithRingtone(activity);
 
         String callId      = b.getString("callId", "");
         String callerName  = b.getString("callerName", "Unknown");
         String avatarUrl   = b.getString("avatarUrl", "");
-        String callerPhone = b.getString("callerPhone", ""); // 👈 NEW
+        String callerPhone = b.getString("callerPhone", "");
 
         String displayName = (callerName == null || callerName.trim().isEmpty()) ? "Inconnu" : callerName;
         String phoneOrId   = (callerPhone == null || callerPhone.trim().isEmpty())
@@ -480,7 +567,6 @@ public class MainActivity extends FlutterActivity {
         inCall.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         inCall.putExtras(b);
 
-        // Full screen & tap => ouvre l’écran d’appel entrant
         PendingIntent fsPending = PendingIntent.getActivity(
                 activity,
                 (callId.hashCode() ^ (1 * 31)),
@@ -501,8 +587,8 @@ public class MainActivity extends FlutterActivity {
         NotificationCompat.Builder nb = new NotificationCompat.Builder(activity, CALLS_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                 .setContentTitle("Appel entrant")
-                .setContentText(displayName) // collapsed
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + phoneOrId)) // 👈 name + number
+                .setContentText(displayName)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(displayName + "\n" + phoneOrId))
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setOngoing(true)
@@ -521,7 +607,6 @@ public class MainActivity extends FlutterActivity {
         NotificationManager nm = (NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
         nm.notify(notifId, n);
 
-        // avatar (local immédiat / http en asynchrone)
         applyLargeIconIfAny(activity, avatarUrl, notifId, nb);
     }
 }

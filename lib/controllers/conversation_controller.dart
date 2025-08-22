@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:bcalio/controllers/chat_room_controller.dart';
-import 'package:flutter/material.dart';
+
+import 'package:flutter/material.dart';           // ← pour Get.snackbar + Colors
+import 'package:flutter/widgets.dart';            // ← pour WidgetsBinding.instance.lifecycleState
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,8 +10,9 @@ import '../models/conversation_model.dart';
 import '../models/true_message_model.dart';
 import '../services/conversation_api_service.dart';
 import '../widgets/base_widget/custom_snack_bar.dart';
-import '../widgets/notifications/notification_card_widget.dart';
 import 'user_controller.dart';
+
+// ⚠️ IMPORTANT : on supprime toute notif locale Flutter pour “chat”.
 
 class ConversationController extends GetxController {
   final ConversationApiService conversationApiService;
@@ -66,7 +68,6 @@ class ConversationController extends GetxController {
     try {
       final prefs = await SharedPreferences.getInstance();
       final cachedConversations = prefs.getString('cachedConversations');
-      debugPrint('loadCachedConversations cache: $cachedConversations');
       if (cachedConversations != null) {
         final List<dynamic> jsonList = jsonDecode(cachedConversations);
         final allConversation =
@@ -115,17 +116,30 @@ class ConversationController extends GetxController {
             ),
           );
 
+          // Nouveau message ?
           if (conversation.messages.length > oldConversation.messages.length) {
             final newMessage = conversation.messages.last;
 
+            // Pas mes propres messages
             if (newMessage.sender?.id != currentUserId) {
-              showSimpleNotification(
-                senderName: newMessage.sender?.name ?? "Expéditeur inconnu",
-                messageContent: newMessage.body.isNotEmpty
-                    ? newMessage.body
-                    : "A envoyé une pièce jointe",
-                conversationId: conversation.id,
-              );
+              // ✅ NE PAS créer de notif système ici.
+              // Android (service natif) s’occupe des notifs quand l’app n’est pas au 1er plan.
+
+              // Optionnel: petit toast *uniquement* si l’app est AU PREMIER PLAN.
+              if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+                final senderName = newMessage.sender?.name ?? "Message";
+                final content = _previewFor(newMessage);
+                // Un petit banner discret in-app (aucune notification système)
+                Get.snackbar(
+                  senderName,
+                  content,
+                  snackPosition: SnackPosition.TOP,
+                  backgroundColor: Colors.black87,
+                  colorText: Colors.white,
+                  margin: const EdgeInsets.all(12),
+                  duration: const Duration(seconds: 2),
+                );
+              }
             }
           }
         }
@@ -138,18 +152,6 @@ class ConversationController extends GetxController {
   void stopPolling() {
     _pollingTimer?.cancel();
     _pollingTimer = null;
-  }
-
-  Future<void> resumePolling() async {
-    isPollingPaused = false;
-    final token = await Get.find<UserController>().getToken();
-    if (token != null) {
-      startPolling(token);
-    }
-  }
-
-  void pausePolling() {
-    isPollingPaused = true;
   }
 
   Future<Conversation> createConversation({
@@ -251,13 +253,19 @@ class ConversationController extends GetxController {
       await conversationApiService.deleteConversation(
           token: token, conversationId: conversationId);
       conversations.removeWhere((c) => c.id == conversationId);
-      Get.find<ChatRoomController>(tag: conversationId)?.stopPolling();
       showSuccessSnackbar("Succès, conversation supprimée avec succès.");
     } catch (e) {
       debugPrint('Erreur dans deleteConversation: $e');
-      if (!e.toString().contains('ChatRoomController')) {
-        showErrorSnackbar('Erreur, échec de la suppression de la conversation.');
-      }
+      showErrorSnackbar('Erreur, échec de la suppression de la conversation.');
     }
+  }
+
+  /* ---------- helpers ---------- */
+  String _previewFor(Message m) {
+    if ((m.image ?? '').isNotEmpty) return '📷 Photo';
+    if ((m.audio ?? '').isNotEmpty) return '🎤 Message vocal';
+    if ((m.video ?? '').isNotEmpty) return '🎬 Vidéo';
+    final b = (m.body).trim();
+    return b.isEmpty ? 'Nouveau message' : b;
   }
 }
