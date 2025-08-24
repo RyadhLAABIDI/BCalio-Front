@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
+
 import '../../themes/theme.dart';
 import '../../widgets/settings/contacts_section.dart';
 import '../../widgets/settings/notifications_section.dart';
@@ -46,8 +47,13 @@ class SettingsScreen extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // ---- QR Section (NOUVEAU) ----
+          // ---- QR Section (existant : montrer mon QR d’ajout de contact) ----
           _QrCard(isDark: isDarkMode),
+
+          const SizedBox(height: 12),
+
+          // ---- NOUVEAU : Scan pour connexion Web (séparé) ----
+          _QrPairCard(isDark: isDarkMode),
 
           const SizedBox(height: 20),
           const NotificationSection(),
@@ -197,7 +203,7 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-/// Carte QR (nouvelle)
+/// Carte QR “Mon QR” (existant : QR d’ajout de contact)
 class _QrCard extends StatelessWidget {
   final bool isDark;
   const _QrCard({required this.isDark});
@@ -246,17 +252,17 @@ class _QrCard extends StatelessWidget {
               children: [
                 Text('Mon QR',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        )),
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    )),
                 const SizedBox(height: 4),
                 Text(
                   'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white.withOpacity(0.9),
-                      ),
+                    color: Colors.white.withOpacity(0.9),
+                  ),
                 ),
               ],
             ),
@@ -266,6 +272,86 @@ class _QrCard extends StatelessWidget {
             onPressed: () => Get.toNamed('/qr/my'),
             icon: const Icon(Iconsax.export_1, size: 18),
             label: const Text('Ouvrir'),
+            style: ElevatedButton.styleFrom(
+              foregroundColor: Colors.black,
+              backgroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Carte QR “Connexion Web” (nouveau : scanner le QR du site)
+class _QrPairCard extends StatelessWidget {
+  final bool isDark;
+  const _QrPairCard({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final gradient = isDark
+        ? const LinearGradient(
+            colors: [Color(0xFF1A1824), Color(0xFF232B45)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          )
+        : const LinearGradient(
+            colors: [Color(0xFFDDEBFF), Color(0xFFF2F7FF)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          );
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: isDark ? Colors.black.withOpacity(0.18) : Colors.blue.withOpacity(0.12),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(isDark ? 0.08 : 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 28),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Connexion Web',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    )),
+                const SizedBox(height: 4),
+                Text(
+                  'Scanner le QR affiché sur le site pour ouvrir ta session.',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.white.withOpacity(0.9),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: () => Get.toNamed('/qr/web-scan'),
+            icon: const Icon(Iconsax.scan_barcode, size: 18),
+            label: const Text('Scanner'),
             style: ElevatedButton.styleFrom(
               foregroundColor: Colors.black,
               backgroundColor: Colors.white,

@@ -90,7 +90,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
     final me = Get.find<UserController>();
     _rtc = WebRTCController(
-      baseUrl  : 'http://192.168.1.25:1906',
+      baseUrl  : 'http://192.168.1.12:1906',
       callId   : '${me.userId}_${_isGroup ? 'group' : widget.recipientID}',
       selfName : me.userName,
       withVideo: false,

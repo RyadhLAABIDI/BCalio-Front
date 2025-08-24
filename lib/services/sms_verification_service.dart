@@ -4,29 +4,32 @@ import 'dart:math';
 
 class SmsVerificationService {
   static const String _baseUrl =
-      'https://mpr282.api.infobip.com/messages-api/1/messages';
-  static const String _apiKey =
-      'f1a67b7be0b2703198f2dc63862d9cf6-dd1a7a76-465e-4cdb-8fc2-194eb6162a28'; // Replace with your API key
-  static const String _sender =
-      '+44 7491 163443'; // Replace with your registered Sender ID
+      'https://mpr282.api.infobip.com/sms/2/text/advanced';
 
-  /// Formats the phone number by adding +216 if it doesn't already have it.
+  static const String _apiKey =
+      '7c1f7bb583f9ea17665ce2fe7f65bfbf-09ecbc38-898b-4f05-a358-653c6ce358a2'; 
+  // ⚠️ Remplace par ta propre clé API
+
+  static const String _sender = '+44 7491 163443'; 
+  // ⚠️ Remplace par ton Sender ID enregistré
+
+  /// ✅ Formatte le numéro de téléphone en ajoutant +216 s’il ne l’a pas déjà.
   String formatPhoneNumber(String phoneNumber) {
     if (!phoneNumber.startsWith('+216')) {
-      // Remove any leading zeros or other prefixes
-      phoneNumber =
-          phoneNumber.replaceAll(RegExp(r'^0+'), ''); // Remove leading zeros
-      phoneNumber = phoneNumber.replaceAll(
-          RegExp(r'[^0-9]'), ''); // Remove non-numeric characters
-      return '+216$phoneNumber'; // Add +216 prefix
+      // Supprimer les zéros initiaux
+      phoneNumber = phoneNumber.replaceAll(RegExp(r'^0+'), '');
+      // Supprimer tout caractère non numérique
+      phoneNumber = phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
+      // Ajouter le préfixe +216
+      return '$phoneNumber';
     }
-    return phoneNumber; // Return the number as is if it already has +216
+    return phoneNumber;
   }
 
-  /// Sends a custom message to the given phone number.
+  /// ✅ Envoie un message personnalisé à un numéro donné.
   Future<bool> sendMessage(String phoneNumber, String message) async {
     try {
-      // Format the phone number before sending the message
+      // Formater le numéro avant l’envoi
       final formattedPhoneNumber = formatPhoneNumber(phoneNumber);
 
       final response = await http.post(
@@ -45,37 +48,39 @@ class SmsVerificationService {
               ],
               "content": {
                 "body": {
-                  "text": message, // Use the custom message here
-                  "type": "TEXT"
+                  "text": message,
+                  "type": "TEXT",
                 }
               }
             }
           ]
         }),
       );
-      print("Response send sms : ${response.body}");
+
+      print("📩 Response send sms : ${response.body}");
+
       if (response.statusCode == 200) {
-        print('Message sent successfully to $formattedPhoneNumber');
+        print('✅ Message envoyé avec succès à $formattedPhoneNumber');
         return true;
       } else {
-        print('Failed to send message: ${response.body}');
+        print('❌ Échec de l’envoi : ${response.body}');
         return false;
       }
     } catch (e) {
-      print('Error sending message: $e');
+      print('⚠️ Erreur lors de l’envoi : $e');
       return false;
     }
   }
 
-  /// Sends an OTP to the given phone number.
+  /// ✅ Envoie un OTP à un numéro donné.
   Future<bool> sendOTP(String phoneNumber, String otp) async {
     final message = "Your OTP is $otp. It is valid for 10 minutes.";
     return sendMessage(phoneNumber, message);
   }
 
-  /// Generates a random 6-digit OTP.
+  /// ✅ Génère un OTP aléatoire à 6 chiffres.
   String generateOTP() {
     final random = Random();
-    return (random.nextInt(900000) + 100000).toString(); // Generate 6-digit OTP
+    return (random.nextInt(900000) + 100000).toString();
   }
 }

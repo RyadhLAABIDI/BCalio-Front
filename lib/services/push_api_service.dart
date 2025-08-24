@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 /// Petit client pour pinger ton call-server et déclencher la notif message.
 class PushApiService {
   // ⚠️ même hôte/port que pour /push/register
-  static const String _base = 'http://192.168.1.26:1906';
+  static const String _base = 'http://192.168.1.12:1906';
 
   /// Déclenche une push "chat_message" (on peut passer 1 ou N destinataires).
   Future<void> notifyNewMessage({

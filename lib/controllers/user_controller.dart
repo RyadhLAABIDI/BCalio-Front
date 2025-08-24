@@ -11,19 +11,18 @@ import '../models/true_user_model.dart';
 import '../services/socket_service.dart';
 import '../services/user_api_service.dart';
 import '../utils/misc.dart';
+// [SYNC] ajoute
+import '../services/contacts_sync_service.dart';
 
 class UserController extends GetxController {
   final UserApiService userApiService;
   late final SocketService socketService;
 
-  // ⬅️ FIX: enlever l'espace après http://
-  static const String pushBaseUrl = 'http://192.168.1.26:1906';
+  static const String pushBaseUrl = 'http://192.168.1.12:1906';
 
   UserController({required this.userApiService})
-      // ⬅️ FIX: enlever l'espace ici aussi
-      : socketService = SocketService(baseUrl: 'http://192.168.1.26:1906');
+      : socketService = SocketService(baseUrl: 'http://192.168.1.12:1906');
 
-  // ------- état utilisateur courant -------
   final Rx<User?> _currentUser = Rx<User?>(null);
   Rx<User?> get currentUser => _currentUser;
 
@@ -33,10 +32,8 @@ class UserController extends GetxController {
   String get userId   => _currentUser.value?.id   ?? '';
   String get userName => _currentUser.value?.name ?? '';
 
-  // FCM
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
 
-  // ------- PRÉSENCE -------
   final RxMap<String, bool>       online   = <String, bool>{}.obs;
   final RxMap<String, DateTime?>  lastSeen = <String, DateTime?>{}.obs;
 
@@ -48,7 +45,6 @@ class UserController extends GetxController {
     socketService.requestPresence(uids);
   }
 
-  // ------- VISIBILITÉ MANUELLE -------
   final RxBool isOnlineVisible = true.obs;
 
   Future<void> loadVisibilityPref() async {
@@ -62,13 +58,16 @@ class UserController extends GetxController {
     socketService.setVisibility(visible);
   }
 
+  // [SYNC] ajoute
+  final ContactsSyncService _contactsSync = ContactsSyncService();
+  final Rx<DateTime?> lastPhoneSync = Rx<DateTime?>(null);
+
   @override
   void onInit() {
     super.onInit();
 
     loadVisibilityPref();
 
-    // socket callbacks
     socketService.onRegistered = () {
       debugPrint('[Socket] Registered OK (userId: $userId)');
       socketService.setVisibility(isOnlineVisible.value);
@@ -78,7 +77,6 @@ class UserController extends GetxController {
     socketService.onCallError = (err) => Get.snackbar('Error', err,
         backgroundColor: Colors.red, colorText: Colors.white);
 
-    // présence
     socketService.onPresenceUpdate = (uid, isOn, ls) {
       if (uid.isEmpty) return;
       online[uid]   = isOn;
@@ -95,18 +93,15 @@ class UserController extends GetxController {
       }
     };
 
-    // Dès qu'on a un user → register socket + enregistrer FCM
     ever<User?>(_currentUser, (u) async {
       if (u != null) {
         socketService.connectAndRegister(u.id, u.name);
-        await _ensureFcmRegistered(); // ⬅️ IMPORTANT
+        await _ensureFcmRegistered();
       }
     });
 
-    // Restaurer session au boot
     _restoreSessionAndRegister();
 
-    // Ré-inscrire FCM si le token change
     _fcm.onTokenRefresh.listen((newToken) async {
       debugPrint('[FCM] onTokenRefresh: $newToken');
       final p = await SharedPreferences.getInstance();
@@ -117,7 +112,6 @@ class UserController extends GetxController {
     });
   }
 
-  /// Récupère user+token depuis SharedPreferences et ré-enregistre la socket + FCM
   Future<void> _restoreSessionAndRegister() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -141,18 +135,15 @@ class UserController extends GetxController {
         about: about,
       );
 
-      _currentUser.value = u; // déclenche connect + ensureFCM via ever
+      _currentUser.value = u;
       debugPrint('[Session] restored → $uid / $name');
     } catch (e) {
       debugPrint('[Session] restore error: $e');
     }
   }
 
-  // ------- FCM register/unregister vers backend -------
-
   Future<void> _ensureFcmRegistered() async {
     try {
-      // Demande la permission (Android 13+), au cas où
       await _fcm.requestPermission();
 
       String? token = await _fcm.getToken();
@@ -172,9 +163,8 @@ class UserController extends GetxController {
     }
   }
 
-  // Helper sûr pour construire une URI à partir d’une base
   Uri _buildUri(String base, String path) {
-    final b = base.trim(); // ⬅️ IMPORTANT
+    final b = base.trim();
     final u = Uri.parse(b);
     return u.replace(path: path.startsWith('/') ? path : '/$path');
   }
@@ -210,7 +200,6 @@ class UserController extends GetxController {
     }
   }
 
-  // ------- token & identité -------
   Future<void> _saveToken(String token) async =>
       (await SharedPreferences.getInstance()).setString('token', token);
 
@@ -228,7 +217,6 @@ class UserController extends GetxController {
     return {'email': p.getString('email'), 'password': p.getString('password')};
   }
 
-  // ------- auth -------
   Future<void> login(String email, String password) async {
     isLoading.value = true;
     try {
@@ -246,7 +234,6 @@ class UserController extends GetxController {
         ..setString('userId', auth.user.id);
 
       await _ensureFcmRegistered();
-
       Get.offAllNamed('/navigationScreen');
     } catch (e) {
       showSnackbar('Please check your credentials'.tr);
@@ -273,7 +260,6 @@ class UserController extends GetxController {
     }
   }
 
-  // ------- register -------
   Future<void> registerWithAvatar({
     required String email,
     required String password,
@@ -301,7 +287,6 @@ class UserController extends GetxController {
     }
   }
 
-  // ------- auto-login -------
   Future<void> autoLogin() async {
     final creds = await getCredentials();
     if (creds['email'] != null && creds['password'] != null) {
@@ -309,7 +294,6 @@ class UserController extends GetxController {
     }
   }
 
-  // ------- profil -------
   Future<void> updateProfile({
     required String name,
     required String image,
@@ -343,7 +327,6 @@ class UserController extends GetxController {
     }
   }
 
-  // ------- APIs utiles -------
   Future<List<User>> fetchUsers(String token) async {
     try {
       return await userApiService.fetchUsers(token);
@@ -364,4 +347,23 @@ class UserController extends GetxController {
 
   void debugUserInfo() =>
       debugPrint('UserId: $userId  —  Name: $userName (logged: ${user != null})');
+
+  // [SYNC] expose la synchro pour l’appeler après scan QR
+  Future<void> syncPhoneContactsNow() async {
+    try {
+      final token = await getToken();
+      if (token == null || token.isEmpty) {
+        showSnackbar('Non connecté');
+        return;
+      }
+      isLoading.value = true;
+      final res = await _contactsSync.syncPhoneContacts(token);
+      lastPhoneSync.value = res.updatedAt ?? DateTime.now();
+      showSnackbar('Contacts synchronisés (${res.saved})');
+    } catch (e) {
+      showSnackbar('Échec de la synchronisation');
+    } finally {
+      isLoading.value = false;
+    }
+  }
 }

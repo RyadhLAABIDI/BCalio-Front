@@ -176,7 +176,8 @@ class ChatRoomController extends GetxController {
       }
       debugPrint('isSeen+++++++++++++++++++++++++++++');
     } catch (e) {
-      Get.snackbar('Error', 'Failed to fetch messages: $e');
+      // ⚠️ retiré: Get.snackbar('Error', 'Failed to fetch messages: $e');
+      debugPrint('Failed to fetch messages: $e');
     } finally {
       isLoading.value = false;
     }
@@ -218,7 +219,8 @@ class ChatRoomController extends GetxController {
           _pollingTimer?.cancel();
           Get.offAllNamed(Routes.login);
         } else {
-          Get.snackbar('Error', 'Failed to fetch messages: $e');
+          // ⚠️ retiré: Get.snackbar('Error', 'Failed to fetch messages: $e');
+          debugPrint('Failed to fetch messages (polling): $e');
         }
       }
     });

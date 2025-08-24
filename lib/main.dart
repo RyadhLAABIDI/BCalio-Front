@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:bcalio/models/conversation_model.dart';
-import 'package:bcalio/test_app.dart';
 import 'package:bcalio/widgets/notifications/notification_card_widget.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -211,7 +210,6 @@ void _signalChatReadyResilient() {
 /* ===========================================================
    ==  Helpers contact/avatar/phone/id ==
    =========================================================== */
-
 
 String? _findAvatarFor(String userId) {
   try {
@@ -736,12 +734,15 @@ void main() async {
   await Get.find<ContactController>().requestContactsPermission();
   await _requestAVPermissions();
 
-  /* ---------- prefs ---------- */
+  /* ---------- prefs & choix de route initiale ---------- */
   final prefs = await SharedPreferences.getInstance();
-  final userToken = prefs.getString('token') ?? '';
-  final rememberMe =
-      userToken.isNotEmpty ? (prefs.getBool('rememberMe') ?? false) : false;
+  final userToken   = prefs.getString('token') ?? '';
   final isFirstTime = prefs.getBool('isFirstTime') ?? true;
+
+  // si token présent → on va DIRECT sur la navigation principale
+  final String initialRoute = userToken.isNotEmpty
+      ? Routes.navigationScreen
+      : (isFirstTime ? Routes.start : Routes.login);
 
   /* ---------- auto-connexion socket si déjà loggé ---------- */
   final uid = prefs.getString('userId') ?? '';
@@ -757,10 +758,7 @@ void main() async {
   WidgetsBinding.instance.addPostFrameCallback((_) => _drainPendingIncoming());
   Future.delayed(const Duration(milliseconds: 200), _drainPendingIncoming);
 
-  runApp(MyApp(
-    rememberMe: rememberMe,
-    isFirstTime: isFirstTime,
-  ));
+  runApp(MyApp(initialRoute: initialRoute));
 }
 
 /* -------------------- OUVERTURE CONVERSATION -------------------- */
@@ -826,9 +824,8 @@ Future<void> _onNotifTap(NotificationResponse resp) async {
 /*                              APP                                   */
 /* ------------------------------------------------------------------ */
 class MyApp extends StatelessWidget {
-  final bool rememberMe;
-  final bool isFirstTime;
-  MyApp({super.key, required this.rememberMe, required this.isFirstTime});
+  final String initialRoute; // ⬅️ nouveau : on passe la route choisie
+  MyApp({super.key, required this.initialRoute});
 
   final ThemeController themeCtrl = Get.find<ThemeController>();
   final LanguageController langCtrl = Get.find<LanguageController>();
@@ -846,9 +843,7 @@ class MyApp extends StatelessWidget {
           darkTheme: AppThemes.darkTheme,
           themeMode: themeCtrl.themeMode.value,
           getPages: Routes.routes,
-          initialRoute: isFirstTime
-              ? Routes.start
-              : (rememberMe ? Routes.navigationScreen : Routes.login),
+          initialRoute: initialRoute, // ⬅️ ici
           builder: (_, child) => child ?? const SizedBox.shrink(),
         ));
   }

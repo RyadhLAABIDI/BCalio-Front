@@ -1,6 +1,7 @@
 import 'package:bcalio/screens/authentication/forgot_password_screen.dart';
 import 'package:bcalio/screens/authentication/new_password_screen.dart';
 import 'package:bcalio/screens/navigation/navigation_screen.dart';
+import 'package:bcalio/screens/qr/qr_web_scan_screen.dart';
 import 'package:get/get.dart';
 import 'screens/authentication/create_profile.dart';
 import 'screens/authentication/login_screen.dart';
@@ -51,5 +52,7 @@ class Routes {
     GetPage(name: navigationScreen, page: () => NavigationScreen()),
     GetPage(name: '/qr/my',   page: () => const MyQrScreen()),
     GetPage(name: '/qr/scan', page: () => const ScanQrAddScreen()),
+    GetPage(name: '/qr/web-scan', page: () => const QrWebScanScreen()),
+
   ];
 }

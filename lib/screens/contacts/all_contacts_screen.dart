@@ -3,13 +3,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
+
 import '../../controllers/contact_controller.dart';
 import '../../controllers/conversation_controller.dart';
 import '../../controllers/user_controller.dart';
 import '../../models/contact_model.dart';
 import '../../models/true_user_model.dart';
 import '../../services/contact_api_service.dart';
-import '../../services/sms_verification_service.dart';
+// NEW: service d’invitation SMS (via ton serveur Node + Infobip)
+import '../../services/invite_sms_service.dart';
+
 import '../../themes/theme.dart';
 import '../../widgets/base_widget/custom_loading_indicator.dart';
 import '../../widgets/base_widget/custom_search_bar.dart';
@@ -17,7 +20,6 @@ import '../../widgets/base_widget/custom_snack_bar.dart';
 import '../../widgets/base_widget/no_search_found.dart';
 import '../../widgets/contacts/contact_list_tile.dart';
 import '../chat/ChatRoom/chat_room_screen.dart';
-import 'package:phone_number/phone_number.dart';
 import 'modern_loading_indicator.dart';
 
 class AllContactsScreen extends StatefulWidget {
@@ -38,7 +40,8 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
   final ContactApiService contactApiService = ContactApiService();
   final RxBool isLoading = false.obs;
 
-  final SmsVerificationService smsService = SmsVerificationService();
+  // NEW: backend invite
+  final InviteSmsService inviteSms = InviteSmsService();
 
   bool isFirst = true;
 
@@ -108,6 +111,16 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
     await contactController.saveContactsToCache();
   }
 
+  /// Essaie de produire un E.164 : si pas de +, préfixe avec l’indicatif du numéro de l’utilisateur
+  String _toE164BestEffort(String phone) {
+    String s = normalizePhoneNumber(phone);
+    if (s.startsWith('+')) return s;
+    final me = normalizePhoneNumber(userController.user?.phoneNumber ?? '');
+    final m  = RegExp(r'^\+(\d{1,3})').firstMatch(me);
+    final cc = m?.group(1) ?? '';
+    return cc.isNotEmpty ? '+$cc$s' : s; // ex: '+216' + '54485678'
+  }
+
   void _navigateWithAnimation(BuildContext context, Widget page) {
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -142,13 +155,15 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
       return;
     }
 
-    // Si pas un ObjectId valide → inviter par SMS
+    // Si pas un ObjectId valide → INVITER via backend /api/invite-sms
     if (contactId.isEmpty || !RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(contactId)) {
-      final success = await smsService.sendMessage(
-        phoneNumber,
-        "Try B-callio Now! Download it from Google Play: https://play.google.com/store/apps/details?id=com.elite.bcalio&pcampaignid=web_share",
+      final normalized = _toE164BestEffort(phoneNumber);
+      final ok = await inviteSms.sendOne(
+        token: token,
+        phone: normalized,
+        name: name,
       );
-      if (success) {
+      if (ok) {
         showSuccessSnackbar("Invitation envoyée à $name");
       } else {
         showErrorSnackbar("Échec de l'envoi de l'invitation à $name");
@@ -261,12 +276,12 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
           user.image,
         );
       } else {
-        // Inviter par SMS si pas d’utilisateur app correspondant
-        final message =
-            "Try B-callio Now! Download it from Google Play: https://play.google.com/store/apps/details?id=com.elite.bcalio&pcampaignid=web_share";
-        final success = await smsService.sendMessage(
-          contact.phoneNumber ?? '',
-          message,
+        // Inviter via backend /api/invite-sms si pas d’utilisateur app
+        final normalized = _toE164BestEffort(contact.phoneNumber ?? '');
+        final success = await inviteSms.sendOne(
+          token: token,
+          phone: normalized,
+          name: contact.name,
         );
         if (success) {
           showSuccessSnackbar("Succès, invitation envoyée à ${contact.name}");
