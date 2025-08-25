@@ -18,10 +18,10 @@ class UserController extends GetxController {
   final UserApiService userApiService;
   late final SocketService socketService;
 
-  static const String pushBaseUrl = 'http://192.168.1.12:1906';
+  static const String pushBaseUrl = 'http://192.168.1.20:1906';
 
   UserController({required this.userApiService})
-      : socketService = SocketService(baseUrl: 'http://192.168.1.12:1906');
+      : socketService = SocketService(baseUrl: 'http://192.168.1.20:1906');
 
   final Rx<User?> _currentUser = Rx<User?>(null);
   Rx<User?> get currentUser => _currentUser;
