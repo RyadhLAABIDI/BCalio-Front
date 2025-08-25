@@ -12,11 +12,14 @@ import '../widgets/base_widget/custom_snack_bar.dart';
 
 class ContactController extends GetxController {
   final ContactApiService contactApiService;
+  ContactController({required this.contactApiService});
+
+  final UserController userController = Get.find<UserController>();
+
   RxBool isPermissionGranted = false.obs;
   RxBool isLoading = false.obs;
   RxBool isLoadingContacts = true.obs;
   RxString selectedCountryCode = ''.obs;
-  ContactController({required this.contactApiService});
 
   RxList<Contact> contacts = <Contact>[].obs;
   RxList<Contact> allContacts = <Contact>[].obs;
@@ -37,163 +40,53 @@ class ContactController extends GetxController {
     }
   }
 
-  Future<void> fetchContactsFromApiPhone() async {
-    debugPrint('Fetching contacts...');
+  /* ─────────────────────────── utils ─────────────────────────── */
 
-    final token = await userController.getToken();
-    if (token == null || token.isEmpty) {
-      Get.snackbar("Erreur", "Échec de la récupération du token. Veuillez vous reconnecter.");
-      return;
-    }
+  String _normalizePhone(String? phone) {
+    if (phone == null) return '';
+    return phone.replaceAll(RegExp(r'[^0-9+]'), '');
+  }
 
-    try {
-      isLoading.value = true;
-      await loadCachedContacts();
-      final cachedContacts = List<Contact>.from(contacts);
-      debugPrint('Loading cached contacts: ${cachedContacts.length}');
-
-      // Fetch API contacts
-      debugPrint('Fetching API contacts...');
-      await fetchContacts(token);
-      await fetchAllContacts(token);
-
-      // Fetch phone contacts
-      debugPrint('Fetching phone contacts...');
-      final phoneContacts = await fetchPhoneContacts();
-      originalPhoneContacts.assignAll(phoneContacts);
-
-      // Check if contacts have changed
-      if (areContactsDifferent(cachedContacts, [
-        ...originalApiContacts,
-        ...phoneContacts,
-        ...originalAllApiContacts,
-      ])) {
-        // Normalize all API contacts
-        final apiContactMap = <String, Contact>{};
-        for (final apiContact in originalAllApiContacts) {
-          try {
-            final normalized = await extractPhoneDetails(apiContact.phoneNumber);
-            if (normalized != null) {
-              apiContactMap[normalized] = apiContact;
-              debugPrint('API contact normalized: $normalized, ID: ${apiContact.id}');
-            }
-          } catch (e) {
-            debugPrint('Erreur normalisation contact API ${apiContact.phoneNumber}: $e');
-          }
-        }
-
-        // Process phone contacts
-        final updatedPhoneContacts = <Contact>[];
-        for (final phoneContact in originalPhoneContacts) {
-          final phoneNumber = phoneContact.phoneNumber;
-          if (phoneNumber == null || phoneNumber.isEmpty) {
-            debugPrint('Skipping empty phone number');
-            continue;
-          }
-
-          debugPrint('Processing phone contact: $phoneNumber');
-          final phoneNormalized = await extractPhoneDetails(phoneNumber);
-          if (phoneNormalized == null) {
-            debugPrint('Format numéro invalide: $phoneNumber');
-            updatedPhoneContacts.add(phoneContact.copyWith(isPhoneContact: true));
-            continue;
-          }
-
-          final matchingApiContact = apiContactMap[phoneNormalized];
-          if (matchingApiContact != null) {
-            debugPrint('Match trouvé pour $phoneNormalized, utilisation contactId: ${matchingApiContact.id}');
-            updatedPhoneContacts.add(matchingApiContact);
-          } else {
-            updatedPhoneContacts.add(phoneContact.copyWith(
-              isPhoneContact: true,
-              id: '',
-            ));
-            debugPrint('Aucun match pour $phoneNormalized, marqué comme contact téléphone');
-          }
-        }
-
-        // Combine API and phone contacts
-        contacts.assignAll([
-          ...originalApiContacts,
-          ...updatedPhoneContacts.where(
-              (c) => !originalApiContacts.contains(c)),
-        ]);
-
-        await saveContactsToCache();
-        debugPrint('Contacts chargés: ${contacts.length}');
-      } else {
-        debugPrint('Contacts identiques. Traitement ignoré.');
-      }
-    } catch (e) {
-      Get.snackbar('Erreur', 'Échec du traitement des contacts: ${e.toString()}');
-      debugPrint('Erreur traitement contacts: $e');
-    } finally {
-      isLoading.value = false;
-      isLoadingContacts.value = false;
-    }
+  bool _existsByPhone(String phone) {
+    final p = _normalizePhone(phone);
+    if (p.isEmpty) return false;
+    return contacts.any((c) => _normalizePhone(c.phoneNumber) == p);
   }
 
   Future<String?> extractPhoneDetails(String? phone) async {
-    if (phone == null || phone.isEmpty) {
-      debugPrint("Numéro de téléphone vide ou null");
-      return null;
-    }
-    debugPrint("Phone number extractPhoneDetails: $phone");
+    if (phone == null || phone.isEmpty) return null;
     try {
       String cleanedPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
-      
       if (cleanedPhone.startsWith("+")) {
         final parsed = await PhoneNumberUtil().parse(cleanedPhone);
-        debugPrint("Numéro normalisé: ${parsed.nationalNumber}");
         return parsed.nationalNumber;
       } else {
         cleanedPhone = '+216$cleanedPhone';
         final parsed = await PhoneNumberUtil().parse(cleanedPhone);
-        debugPrint("Numéro normalisé avec +216: ${parsed.nationalNumber}");
         return parsed.nationalNumber;
       }
-    } catch (e) {
-      debugPrint('Erreur numéro téléphone: $e');
+    } catch (_) {
       return null;
     }
   }
 
-  String removeSubstring(String input) {
-    int plusIndex = input.indexOf("+");
-    if (plusIndex == -1) {
-      return input;
-    }
-    int spaceIndex = input.indexOf(" ", plusIndex);
-    if (spaceIndex == -1) {
-      return input.substring(0, plusIndex);
-    }
-    return input.substring(0, plusIndex) + input.substring(spaceIndex);
-  }
-
-  final UserController userController = Get.find<UserController>();
-  bool areContactsDifferent(
-      List<Contact> oldContacts, List<Contact> newContacts) {
-    if (oldContacts.length != newContacts.length) {
-      return true;
-    }
+  bool areContactsDifferent(List<Contact> oldContacts, List<Contact> newContacts) {
+    if (oldContacts.length != newContacts.length) return true;
     final oldSet = oldContacts.map((c) => '${c.phoneNumber}-${c.name}').toSet();
     final newSet = newContacts.map((c) => '${c.phoneNumber}-${c.name}').toSet();
     return !oldSet.containsAll(newSet) || !newSet.containsAll(oldSet);
   }
 
+  /* ───────────────── caching ───────────────── */
+
   Future<void> loadCachedContacts() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final cachedContacts = prefs.getString('cachedContacts');
-      debugPrint('loadCachedContacts Contacts en cache: $cachedContacts');
       if (cachedContacts != null) {
-        debugPrint('Chargement contacts depuis cache...');
         final List<dynamic> jsonList = jsonDecode(cachedContacts);
-        final allContactsFromCache =
-            jsonList.map((json) => Contact.fromJson(json)).toList();
+        final allContactsFromCache = jsonList.map((json) => Contact.fromJson(json)).toList();
         contacts.assignAll(allContactsFromCache);
-      } else {
-        debugPrint('Aucun contact en cache trouvé.');
       }
     } catch (e) {
       debugPrint('Erreur chargement contacts en cache: $e');
@@ -202,22 +95,17 @@ class ContactController extends GetxController {
 
   Future<void> saveContactsToCache() async {
     final prefs = await SharedPreferences.getInstance();
-    final allContact = contacts;
-    final jsonList = allContact.map((contact) => contact.toJson()).toList();
-    prefs.setString('cachedContacts', jsonEncode(jsonList));
-    debugPrint('Tous les contacts sauvegardés en cache: ${allContact.length}');
+    final jsonList = contacts.map((contact) => contact.toJson()).toList();
+    await prefs.setString('cachedContacts', jsonEncode(jsonList));
   }
+
+  /* ───────────── permissions contacts ───────────── */
 
   Future<void> requestContactsPermission() async {
     isLoading.value = true;
     final status = await Permission.contacts.request();
-    if (status.isGranted) {
-      isPermissionGranted.value = true;
-      await _saveContactPermissionPreference(true);
-    } else {
-      isPermissionGranted.value = false;
-      await _saveContactPermissionPreference(false);
-    }
+    isPermissionGranted.value = status.isGranted;
+    await _saveContactPermissionPreference(isPermissionGranted.value);
     isLoading.value = false;
   }
 
@@ -234,17 +122,15 @@ class ContactController extends GetxController {
 
   Future<void> loadContactPermissionPreference() async {
     final prefs = await SharedPreferences.getInstance();
-    isPermissionGranted.value =
-        prefs.getBool('isContactsPermissionGranted') ?? false;
+    isPermissionGranted.value = prefs.getBool('isContactsPermissionGranted') ?? false;
   }
+
+  /* ───────────── fetch API / téléphone ───────────── */
 
   Future<void> fetchContacts(String token) async {
     isLoading.value = true;
     try {
-      if (token.isEmpty) {
-        debugPrint('Token vide');
-        return;
-      }
+      if (token.isEmpty) return;
       final fetchedContacts = await contactApiService.getContacts(token);
       originalApiContacts.assignAll(fetchedContacts);
     } catch (e) {
@@ -258,7 +144,6 @@ class ContactController extends GetxController {
     isLoading.value = true;
     try {
       final fetchedContacts = await contactApiService.getAllContacts(token);
-      debugPrint('Tous les contacts récupérés: ${fetchedContacts.map((c) => {"id": c.id, "phoneNumber": c.phoneNumber, "name": c.name})}');
       originalAllApiContacts.assignAll(fetchedContacts);
       allContacts.assignAll(fetchedContacts);
     } catch (e) {
@@ -278,23 +163,20 @@ class ContactController extends GetxController {
         withProperties: true,
         withPhoto: true,
       );
-      final mappedContacts = phoneContacts.map((phoneContact) {
+      final mappedContacts = phoneContacts.map((pc) {
         return Contact(
           id: '',
-          name: phoneContact.displayName != null && phoneContact.displayName!.isNotEmpty
-              ? phoneContact.displayName!
-              : phoneContact.phones.isNotEmpty
-                  ? phoneContact.phones.first.number
-                  : '',
+          name: (pc.displayName != null && pc.displayName!.isNotEmpty)
+              ? pc.displayName!
+              : (pc.phones.isNotEmpty ? pc.phones.first.number : ''),
           email: '',
-          image: phoneContact.photo != null && phoneContact.photo!.isNotEmpty
-              ? 'data:image/jpeg;base64,${base64Encode(phoneContact.photo!)}'
+          image: (pc.photo != null && pc.photo!.isNotEmpty)
+              ? 'data:image/jpeg;base64,${base64Encode(pc.photo!)}'
               : null,
-          phoneNumber: phoneContact.phones.isNotEmpty ? phoneContact.phones.first.number : '',
+          phoneNumber: pc.phones.isNotEmpty ? pc.phones.first.number : '',
           isPhoneContact: true,
         );
       }).toList();
-
       originalPhoneContacts.assignAll(mappedContacts);
       return mappedContacts;
     } catch (e) {
@@ -303,33 +185,193 @@ class ContactController extends GetxController {
     }
   }
 
-  Future<void> addContact(String token, String contactId, String name,
-      String phone, String? email) async {
+  Future<void> fetchContactsFromApiPhone() async {
+    debugPrint('Fetching contacts...');
+    final token = await userController.getToken();
+    if (token == null || token.isEmpty) {
+      Get.snackbar("Erreur", "Échec de la récupération du token. Veuillez vous reconnecter.");
+      return;
+    }
+
+    try {
+      isLoading.value = true;
+      await loadCachedContacts();
+      final cachedContacts = List<Contact>.from(contacts);
+
+      await fetchContacts(token);
+      await fetchAllContacts(token);
+
+      final phoneContacts = await fetchPhoneContacts();
+      originalPhoneContacts.assignAll(phoneContacts);
+
+      if (areContactsDifferent(cachedContacts, [
+        ...originalApiContacts,
+        ...phoneContacts,
+        ...originalAllApiContacts,
+      ])) {
+        // Map tel → Contact API
+        final apiContactMap = <String, Contact>{};
+        for (final apiContact in originalAllApiContacts) {
+          try {
+            final normalized = await extractPhoneDetails(apiContact.phoneNumber);
+            if (normalized != null) apiContactMap[normalized] = apiContact;
+          } catch (_) {}
+        }
+
+        // Projette les contacts téléphone
+        final updatedPhoneContacts = <Contact>[];
+        for (final phoneContact in originalPhoneContacts) {
+          final phoneNumber = phoneContact.phoneNumber;
+          if (phoneNumber == null || phoneNumber.isEmpty) continue;
+          final phoneNormalized = await extractPhoneDetails(phoneNumber);
+          if (phoneNormalized == null) {
+            updatedPhoneContacts.add(phoneContact.copyWith(isPhoneContact: true));
+            continue;
+          }
+          final matchingApiContact = apiContactMap[phoneNormalized];
+          if (matchingApiContact != null) {
+            updatedPhoneContacts.add(matchingApiContact);
+          } else {
+            updatedPhoneContacts.add(phoneContact.copyWith(isPhoneContact: true, id: ''));
+          }
+        }
+
+        contacts.assignAll([
+          ...originalApiContacts,
+          ...updatedPhoneContacts.where((c) => !originalApiContacts.contains(c)),
+        ]);
+
+        await saveContactsToCache();
+      }
+    } catch (e) {
+      Get.snackbar('Erreur', 'Échec du traitement des contacts: ${e.toString()}');
+    } finally {
+      isLoading.value = false;
+      isLoadingContacts.value = false;
+    }
+  }
+
+  /* ───────────── Ajout carnet téléphone ───────────── */
+
+  Future<void> addContactToPhone(String name, String phone, String? email) async {
+    try {
+      if (phone.trim().isEmpty) {
+        debugPrint('addContactToPhone: phone vide — on ignore.');
+        return;
+      }
+
+      final status = await Permission.contacts.status;
+      if (!status.isGranted) {
+        final request = await Permission.contacts.request();
+        if (!request.isGranted) throw Exception("Permission refusée");
+      }
+
+      final contact = phone_contacts.Contact()
+        ..name = phone_contacts.Name(first: name)
+        ..phones.add(phone_contacts.Phone(
+          phone,
+          label: phone_contacts.PhoneLabel.mobile,
+        ));
+
+      if (email != null && email.isNotEmpty) {
+        contact.emails.add(phone_contacts.Email(
+          email,
+          label: phone_contacts.EmailLabel.work,
+        ));
+      }
+
+      await contact.insert();
+      debugPrint('Contact ajouté au téléphone: name=$name, phone=$phone');
+    } catch (e) {
+      debugPrint('Échec ajout contact au téléphone: $e');
+      // On ne bloque pas l’app si l’écriture carnet échoue.
+    }
+  }
+
+  /// ➜ Méthode utilisée par le **scan QR** pour faire "comme le manuel"
+  ///    (ajout carnet + liste locale), sans POST /mobile/contacts
+  Future<void> addPhoneContactFromQr({
+    required String name,
+    required String phone,
+    String? email,
+  }) async {
+    final normalized = _normalizePhone(phone);
+    if (normalized.isEmpty) {
+      Get.snackbar('Erreur', 'Ce contact ne contient pas de numéro.');
+      return;
+    }
+
+    if (_existsByPhone(normalized)) {
+      showSuccessSnackbar('Contact déjà présent');
+      return;
+    }
+
+    // 1) carnet téléphone
+    await addContactToPhone(name.isNotEmpty ? name : phone, phone, email);
+
+    // 2) liste locale (+ cache)
+    final local = Contact(
+      id: '', // pas d'ID serveur (carnet seulement)
+      name: name.isNotEmpty ? name : phone,
+      email: email ?? '',
+      image: null,
+      phoneNumber: phone,
+      isPhoneContact: true,
+    );
+    contacts.add(local);
+    await saveContactsToCache();
+
+    showSuccessSnackbar('Contact ajouté au téléphone');
+  }
+
+  /* ───────────── (Optionnel) Ajout via API centrale ─────────────
+     — utile pour tes autres écrans, pas utilisé par le flow QR —  */
+
+  Future<void> addContact(
+    String token,
+    String contactId,
+    String name,
+    String phone,
+    String? email,
+  ) async {
     try {
       final existingContact = contacts.firstWhere(
-        (contact) => contact.id == contactId,
-        orElse: () => Contact(
-          id: '',
-          name: '',
-          email: '',
-          image: null,
-          phoneNumber: null,
-        ),
+        (c) => c.id == contactId,
+        orElse: () => Contact(id: '', name: '', email: '', image: null, phoneNumber: null),
       );
-
       if (existingContact.id.isNotEmpty) {
         showSuccessSnackbar("Contact déjà ajouté");
         return;
       }
 
-      final newContact = await contactApiService.addContact(token, contactId);
-      originalApiContacts.add(newContact);
-      contacts.add(newContact);
+      // Appel API centrale (tes autres flows)
+      final added = await contactApiService.addContact(token, contactId);
+
+      // Enrichir avec user details (pour récupérer numéro)
+      final details = await contactApiService.getUserById(token, contactId);
+      final merged = Contact(
+        id: added.id.isNotEmpty ? added.id : (details?.id ?? ''),
+        name: added.name.isNotEmpty ? added.name : (details?.name ?? ''),
+        email: added.email.isNotEmpty ? added.email : (details?.email ?? ''),
+        image: added.image ?? details?.image,
+        phoneNumber: added.phoneNumber ?? details?.phoneNumber,
+        isPhoneContact: added.isPhoneContact || (details?.isPhoneContact == true),
+      );
+
+      originalApiContacts.add(merged);
+      contacts.add(merged);
       await saveContactsToCache();
+
       showSuccessSnackbar("Contact ajouté avec succès !");
-      
-      // CORRECTION 1: Toujours ajouter au carnet de contacts
-      await addContactToPhone(name, phone, email); // <-- Ajout crucial
+      // Ajout dans le carnet seulement si un numéro est disponible :
+      final phoneToSave = (merged.phoneNumber ?? '').trim();
+      if (phoneToSave.isNotEmpty) {
+        await addContactToPhone(
+          merged.name.isNotEmpty ? merged.name : (name.isNotEmpty ? name : contactId),
+          phoneToSave,
+          merged.email.isNotEmpty ? merged.email : (email ?? ''),
+        );
+      }
     } catch (e) {
       debugPrint('Erreur ajout contact: $e');
       if (e.toString().contains('Contact already added')) {
@@ -339,35 +381,4 @@ class ContactController extends GetxController {
       }
     }
   }
-
-  Future<void> addContactToPhone(
-    String name, String phone, String? email) async {
-  try {
-    final status = await Permission.contacts.status;
-    if (!status.isGranted) {
-      final request = await Permission.contacts.request();
-      if (!request.isGranted) throw Exception("Permission refusée");
-    }
-
-    // CORRECTION: Use correct Name constructor for flutter_contacts
-    final contact = phone_contacts.Contact()
-      ..name = phone_contacts.Name(first: name) // Use 'first' instead of 'display'
-      ..phones.add(phone_contacts.Phone(
-        phone,
-        label: phone_contacts.PhoneLabel.mobile,
-      ));
-
-    if (email != null && email.isNotEmpty) {
-      contact.emails.add(phone_contacts.Email(
-        email,
-        label: phone_contacts.EmailLabel.work,
-      ));
-    }
-
-    await contact.insert(); // Insertion correcte
-    debugPrint('Contact ajouté au téléphone: name=$name, phone=$phone');
-  } catch (e) {
-    debugPrint('Échec ajout contact au téléphone: $e');
-    throw Exception("Échec ajout contact au téléphone: $e");
-  }
-}}
+}

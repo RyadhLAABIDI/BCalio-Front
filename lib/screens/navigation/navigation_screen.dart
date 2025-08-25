@@ -19,6 +19,10 @@ import 'package:bcalio/widgets/chat/chat_room/call_log_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import 'package:bcalio/controllers/unread_badges_controller.dart';
+import 'package:bcalio/controllers/call_log_controller.dart';
+import 'package:flutter/widgets.dart' show WidgetsBinding;
+
 class NavigationScreen extends StatefulWidget {
   const NavigationScreen({super.key});
 
@@ -50,26 +54,30 @@ class _NavigationScreenState extends State<NavigationScreen>
     super.initState();
     _pageController = PageController();
 
+    if (!Get.isRegistered<UnreadBadgesController>()) {
+      Get.put(UnreadBadgesController(), permanent: true);
+    }
+    if (!Get.isRegistered<CallLogController>()) {
+      Get.put(CallLogController(), permanent: true);
+    }
+
     _animationControllers = List.generate(
       5,
-      (index) =>
-          AnimationController(vsync: this, duration: const Duration(milliseconds: 400)),
+      (index) => AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 400),
+      ),
     );
 
     _animations = [
-      // 0) Map
       Tween<Offset>(begin: const Offset(-1, 0), end: Offset.zero)
           .animate(CurvedAnimation(parent: _animationControllers[0], curve: Curves.easeOut)),
-      // 1) Home
       Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
           .animate(CurvedAnimation(parent: _animationControllers[1], curve: Curves.easeOut)),
-      // 2) Contacts
       Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
           .animate(CurvedAnimation(parent: _animationControllers[2], curve: Curves.easeOut)),
-      // 3) Calls
       Tween<Offset>(begin: const Offset(0.6, 0), end: Offset.zero)
           .animate(CurvedAnimation(parent: _animationControllers[3], curve: Curves.easeOut)),
-      // 4) Settings
       Tween<Offset>(begin: const Offset(0, -1), end: Offset.zero)
           .animate(CurvedAnimation(parent: _animationControllers[4], curve: Curves.easeOut)),
     ];
@@ -86,14 +94,23 @@ class _NavigationScreenState extends State<NavigationScreen>
 
   Future<void> onItemSelected(int index) async {
     if (index == _selectedIndex) return;
+
     setState(() => _selectedIndex = index);
     _animationControllers[_selectedIndex].reset();
     _animationControllers[_selectedIndex].forward();
+
     await _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeOut,
     );
+
+    // Effacer le badge UNIQUEMENT quand l’onglet Calls (index 3) est ouvert
+    if (index == 3 && Get.isRegistered<UnreadBadgesController>()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Get.find<UnreadBadgesController>().clearCalls();
+      });
+    }
   }
 
   final List<Widget> _screens = const [
@@ -124,7 +141,7 @@ class _NavigationScreenState extends State<NavigationScreen>
         physics: const NeverScrollableScrollPhysics(),
         children: List.generate(5, (i) => SlideTransition(position: _animations[i], child: _screens[i])),
       ),
-      extendBody: true, // pour l’effet blur/translucide
+      extendBody: true,
       bottomNavigationBar: _FrostedModernNavBar(
         selectedIndex: _selectedIndex,
         onSelected: onItemSelected,
@@ -134,7 +151,7 @@ class _NavigationScreenState extends State<NavigationScreen>
   }
 }
 
-/// Barre de navigation moderne, robuste (pas d’overflow)
+/// Barre de nav
 class _FrostedModernNavBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
@@ -149,15 +166,10 @@ class _FrostedModernNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
-
-    // On limite le text-scale UNIQUEMENT pour la nav bar, pour éviter tout overflow.
     final navMedia = mq.copyWith(textScaler: const TextScaler.linear(1.0));
 
-    // Couleurs et style
-    final bg = (isDark ? const Color(0xFF101014) : Colors.white).withOpacity(0.75);
-    final border = (isDark ? Colors.white12 : Colors.black12);
-
-    // ► Couleur de marque demandée
+    final bg = (isDark ? const Color(0xFF101014) : Colors.white).withOpacity(0.55);
+    final border = (isDark ? const Color.fromARGB(255, 133, 129, 129) : const Color.fromARGB(255, 133, 129, 129));
     final Color brand = isDark ? kDarkPrimaryColor : kLightPrimaryColor;
 
     return MediaQuery(
@@ -186,10 +198,9 @@ class _FrostedModernNavBar extends StatelessWidget {
                 child: NavigationBarTheme(
                   data: NavigationBarThemeData(
                     height: 72,
-                    indicatorColor: brand.withOpacity(0.12), // (on garde l’esprit mais brandé)
+                    indicatorColor: brand.withOpacity(0.12),
                     backgroundColor: Colors.transparent,
                     surfaceTintColor: Colors.transparent,
-                    // ► Texte (labels) en couleur de marque
                     labelTextStyle: WidgetStateProperty.resolveWith<TextStyle>(
                       (states) => TextStyle(
                         fontSize: 12,
@@ -199,7 +210,6 @@ class _FrostedModernNavBar extends StatelessWidget {
                         color: brand,
                       ),
                     ),
-                    // ► Icônes en couleur de marque
                     iconTheme: WidgetStateProperty.resolveWith<IconThemeData>(
                       (states) => IconThemeData(
                         size: 22,
@@ -211,28 +221,29 @@ class _FrostedModernNavBar extends StatelessWidget {
                     selectedIndex: selectedIndex,
                     onDestinationSelected: onSelected,
                     labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-                    destinations: [
-                      const NavigationDestination(
+                    destinations: const [
+                      NavigationDestination(
                         icon: Icon(Icons.location_on_outlined),
                         selectedIcon: Icon(Icons.location_on),
                         label: 'Location',
                       ),
-                      const NavigationDestination(
+                      NavigationDestination(
                         icon: Icon(Icons.chat_outlined),
                         selectedIcon: Icon(Icons.chat),
                         label: 'Chat',
                       ),
-                      const NavigationDestination(
+                      NavigationDestination(
                         icon: Icon(Icons.person_add_outlined),
                         selectedIcon: Icon(Icons.person_add),
                         label: 'Contact',
                       ),
-                      const NavigationDestination(
-                        icon: Icon(Icons.call_outlined),
-                        selectedIcon: Icon(Icons.call),
+                      // Calls avec fond rouge + compteur si non lu
+                      NavigationDestination(
+                        icon: _CallsIcon(selected: false),
+                        selectedIcon: _CallsIcon(selected: true),
                         label: 'Calls',
                       ),
-                      const NavigationDestination(
+                      NavigationDestination(
                         icon: Icon(Icons.settings_outlined),
                         selectedIcon: Icon(Icons.settings),
                         label: 'Settings',
@@ -246,5 +257,63 @@ class _FrostedModernNavBar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Icône “Calls” avec fond rouge complet + badge quand il y a des manqués
+class _CallsIcon extends StatelessWidget {
+  final bool selected;
+  const _CallsIcon({required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!Get.isRegistered<UnreadBadgesController>()) {
+      return Icon(selected ? Icons.call : Icons.call_outlined);
+    }
+    final ctrl = Get.find<UnreadBadgesController>();
+    return Obx(() {
+      final count = ctrl.calls.value;
+
+      if (count <= 0) {
+        return Icon(selected ? Icons.call : Icons.call_outlined);
+      }
+
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: const BoxDecoration(
+              color: Colors.redAccent,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: const Icon(Icons.call, size: 18, color: Colors.white),
+          ),
+          Positioned(
+            right: -8,
+            top: -6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              constraints: const BoxConstraints(minWidth: 18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.redAccent, width: 1),
+              ),
+              child: Text(
+                count > 99 ? '99+' : '$count',
+                style: const TextStyle(
+                  color: Colors.redAccent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    });
   }
 }

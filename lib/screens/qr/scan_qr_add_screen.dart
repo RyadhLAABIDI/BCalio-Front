@@ -5,6 +5,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../controllers/contact_controller.dart';
 import '../../controllers/user_controller.dart';
 import '../../services/qr_api_service.dart';
+import '../../services/contact_api_service.dart';
 
 class ScanQrAddScreen extends StatefulWidget {
   const ScanQrAddScreen({super.key});
@@ -13,15 +14,17 @@ class ScanQrAddScreen extends StatefulWidget {
 }
 
 class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
-  // ✅ v3+: config anti-doublons via le controller
+  // Anti-doublons + QR only
   final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates, // évite les callbacks multiples
+    detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
     torchEnabled: false,
-    formats: const [BarcodeFormat.qrCode],       // scanne uniquement les QR
+    formats: const [BarcodeFormat.qrCode],
   );
 
   final api = QrApiService();
+  final contactApi = ContactApiService();
+
   bool _busy = false;
   String? _msg;
   Timer? _timer;
@@ -45,7 +48,7 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
   }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (_busy) return; // double sécurité côté UI
+    if (_busy) return;
     final codes = capture.barcodes;
     if (codes.isEmpty) return;
 
@@ -54,13 +57,14 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
 
     setState(() => _busy = true);
     try {
-      // 1) Résoudre le QR via Node (retourne contactId)
+      // 1) Résoudre le QR via Node → { ok, contactId, profile? }
       final qrRes = await api.addByQrText(raw);
       if (qrRes['ok'] != true) {
-        _flash('Échec: ${qrRes['error'] ?? 'inconnu'}');
+        _flash('Échec QR: ${qrRes['error'] ?? 'inconnu'}');
         setState(() => _busy = false);
         return;
       }
+
       final contactId = (qrRes['contactId'] ?? '').toString();
       if (contactId.isEmpty) {
         _flash('QR invalide: contactId manquant');
@@ -68,28 +72,42 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
         return;
       }
 
-      // 2) Appeler TON API existante pour ajouter le contact (pour mise à jour correcte)
+      // 2) On ESSAIE de récupérer les infos utilisateur (lecture seule)
+      String name = (qrRes['profile']?['name'] as String?)?.trim() ?? '';
+      String email = '';
+      String phone = '';
+
       final token = await userCtrl.getToken();
-      if (token == null || token.isEmpty) {
-        _flash('Session expirée, reconnecte-toi');
+      if (token != null && token.isNotEmpty) {
+        final details = await contactApi.getUserById(token, contactId);
+        if (details != null) {
+          name  = (details.name.isNotEmpty ? details.name : name);
+          email = (details.email.isNotEmpty ? details.email : email);
+          phone = (details.phoneNumber ?? '').trim();
+        }
+      }
+
+      // 3) Exiger un numéro pour pouvoir écrire dans le carnet
+      if (phone.isEmpty) {
+        _flash("Utilisateur trouvé, mais son numéro n'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.");
         setState(() => _busy = false);
         return;
       }
 
-      // Récupérer les infos du user pour nom/tel (pour l’ajout au carnet local)
-      final user = await userCtrl.getUser(contactId);
-      final name = user?.name ?? contactId;
-      final phone = user?.phoneNumber ?? '';
+      // 4) Ajout style “manuel” : carnet du tel + liste locale (isPhoneContact)
+      await contactCtrl.addPhoneContactFromQr(
+        name: (name.isNotEmpty ? name : contactId),
+        phone: phone,
+        email: email,
+      );
 
-      await contactCtrl.addContact(token, contactId, name, phone, user?.email);
-
-      _flash('Contact ajouté: $name');
+      _flash('Contact ajouté${name.isNotEmpty ? " : $name" : ""}');
       await Future.delayed(const Duration(milliseconds: 500));
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       _flash('Erreur: $e');
     } finally {
-      setState(() => _busy = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -99,11 +117,7 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
       appBar: AppBar(title: const Text('Ajouter via QR')),
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _controller,
-            // ❌ allowDuplicates: false,  // supprimé en v3
-            onDetect: _onDetect,
-          ),
+          MobileScanner(controller: _controller, onDetect: _onDetect),
           if (_busy) const Center(child: CircularProgressIndicator()),
           if (_msg != null)
             Align(

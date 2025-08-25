@@ -1,15 +1,19 @@
-// lib/services/socket_service.dart
+import 'dart:async'; // 👈 Timer
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
-// 👇 NEW: pour récupérer phone/avatar depuis le profil local
 import 'package:get/get.dart';
 import '../controllers/user_controller.dart';
+
+import 'package:bcalio/models/call_log_model.dart';
+import 'package:bcalio/controllers/call_log_controller.dart';
+import 'package:bcalio/controllers/unread_badges_controller.dart';
+
+import 'package:flutter/widgets.dart' show WidgetsBinding;
 
 class SocketService {
   static SocketService? _instance;
 
-  /// ⚠️ Corrigé : pas d'espace dans l'URL par défaut
   factory SocketService({String baseUrl = 'http://192.168.1.20:1906'}) {
     return _instance ??= SocketService._internal(baseUrl);
   }
@@ -77,12 +81,22 @@ class SocketService {
   void Function(String conversationId, String fromUserId)? onTyping;
   void Function(String conversationId, String fromUserId)? onStopTyping;
 
-  // dans SocketService
   void disconnect() {
     _socket?.disconnect();
   }
 
   final Map<String, String> _nameById = {};
+  final Map<String, String> _avatarById = {};
+
+  // suivi des appels entrants en attente (pour détecter “manqué”)
+  final Set<String> _pendingIncoming = <String>{};
+  final Map<String, DateTime> _incomingStart = {};
+  final Map<String, Map<String, String>> _incomingMeta = {}; // callId -> {peerId,peerName,peerAvatar,type}
+
+  // ⏱ timers locaux pour fallback timeout (serveur n’émet pas au destinataire hors room)
+  final Map<String, Timer> _incomingTimers = {};
+
+  String _normId(dynamic id) => (id?.toString() ?? '').trim();
 
   List<Map<String, String>> _normalizeMembers(dynamic raw) {
     final List<Map<String, String>> out = [];
@@ -126,7 +140,7 @@ class SocketService {
 
     if ((_socket?.connected ?? false) && _registeredUserId == userId) {
       debugPrint('[Socket] already registered for $_registeredUserId — skip');
-      _flushPendingActions(); // ✅ rejouer ce qui attendait
+      _flushPendingActions();
       return;
     }
 
@@ -143,7 +157,6 @@ class SocketService {
 
     _isConnecting = true;
 
-    // ⚠️ Sûreté : trim() (évite les "%20" en tête)
     final url = baseUrl.trim();
 
     _socket = io.io(
@@ -152,7 +165,7 @@ class SocketService {
           .setTransports(['websocket'])
           .enableReconnection()
           .disableAutoConnect()
-          .setReconnectionAttempts(1 << 30) // grand nombre
+          .setReconnectionAttempts(1 << 30)
           .setReconnectionDelay(1000)
           .build(),
     );
@@ -168,20 +181,35 @@ class SocketService {
         _registeredUserId = d['userId']?.toString() ?? userId;
         debugPrint('[Socket] registered OK   socketId=$_socketId  user=$_registeredUserId');
         _nameById[userId] = name;
-        _flushPendingActions(); // ✅ IMPORTANT
+        _flushPendingActions();
         onRegistered?.call();
       })
       ..on('incoming-call', (d) {
         if (_inCall) return;
-        _activeCallId = d['callId'];
+        _activeCallId = _normId(d['callId']);
 
         final isGroup  = d['isGroup'] == true;
-        final callId   = d['callId']?.toString() ?? '';
-        final callerId = d['callerId']?.toString() ?? '';
-        final cname    = d['callerName']?.toString() ?? '';
-        final type     = d['callType']?.toString() ?? 'audio';
+        final callId   = _normId(d['callId']);
+        final callerId = _normId(d['callerId']);
+        final cname    = (d['callerName']?.toString() ?? '');
+        final type     = (d['callType']?.toString() ?? 'audio');
+        final avatar   = (d['avatarUrl']?.toString() ?? '');
 
         if (cname.isNotEmpty) _nameById[callerId] = cname;
+        if (avatar.isNotEmpty) _avatarById[callerId] = avatar;
+
+        // mémorise pour “missed”/“timeout”
+        _pendingIncoming.add(callId);
+        _incomingStart[callId] = DateTime.now();
+        _incomingMeta[callId] = {
+          'peerId': callerId,
+          'peerName': cname,
+          'peerAvatar': avatar,
+          'type': type,
+        };
+
+        // ⏱ Fallback local: si le serveur n’envoie pas d’event direct (room-only), on loggue manqué.
+        _armLocalTimeout(callId);
 
         if (isGroup && onIncomingGroupCall != null) {
           final members = _normalizeMembers(d['members']);
@@ -196,27 +224,59 @@ class SocketService {
         }
       })
       ..on('call-initiated', (d) {
-        _activeCallId = d['callId'];
-        onCallInitiated?.call(d['callId']);
+        _activeCallId = _normId(d['callId']);
+        onCallInitiated?.call(_activeCallId!);
       })
       ..on('call-accepted', (d) {
         _inCall       = true;
-        _activeCallId = d['callId'];
-        onCallAccepted?.call(d['callId']);
+        final cid = _normId(d['callId']);
+        _activeCallId = cid;
+
+        _disarmLocalTimeout(cid); // 👈 stop fallback
+        _pendingIncoming.remove(cid);
+        _incomingStart.remove(cid);
+        _incomingMeta.remove(cid);
+
+        onCallAccepted?.call(cid);
       })
-      ..on('call-rejected', (_) {
+      ..on('call-rejected', (d) {
+        final cid = d is Map ? _normId(d['callId']) : (_activeCallId ?? '');
+        _disarmLocalTimeout(cid); // 👈 stop fallback
+        if (cid.isNotEmpty) {
+          _pendingIncoming.remove(cid);
+          _incomingStart.remove(cid);
+          _incomingMeta.remove(cid);
+        }
         _resetFlags();
         onCallRejected?.call();
       })
-      ..on('call-ended', (_) {
+      ..on('call-ended', (d) {
+        // fallback backend: parfois seul 'call-ended' arrive
+        final cid = d is Map ? _normId(d['callId']) : (_activeCallId ?? '');
+        _disarmLocalTimeout(cid); // 👈 stop fallback
+        if (cid.isNotEmpty && _pendingIncoming.contains(cid) && !_inCall) {
+          _handlePotentialMissed(cid, status: CallStatus.missed);
+        } else {
+          if (cid.isNotEmpty) {
+            _pendingIncoming.remove(cid);
+            _incomingStart.remove(cid);
+            _incomingMeta.remove(cid);
+          }
+        }
         _resetFlags();
         onCallEnded?.call();
       })
-      ..on('call-cancelled', (_) {
+      ..on('call-cancelled', (d) {
+        final cid = d is Map ? _normId(d['callId']) : (_activeCallId ?? '');
+        _disarmLocalTimeout(cid); // 👈 stop fallback
+        _handlePotentialMissed(cid, status: CallStatus.missed);
         _resetFlags();
         onCallCancelled?.call();
       })
-      ..on('call-timeout', (_) {
+      ..on('call-timeout', (d) {
+        final cid = d is Map ? _normId(d['callId']) : (_activeCallId ?? '');
+        _disarmLocalTimeout(cid); // 👈 stop fallback (on va traiter quand même)
+        _handlePotentialMissed(cid, status: CallStatus.timeout);
         _resetFlags();
         onCallTimeout?.call();
       })
@@ -225,7 +285,7 @@ class SocketService {
         onCallError?.call(d['error']);
       })
       ..on('participants', (d) {
-        final callId = d['callId']?.toString() ?? '';
+        final callId = _normId(d['callId']);
         final list = _normalizeParticipants(d['participants']);
         for (final m in list) {
           final uid = m['userId'] ?? '';
@@ -235,15 +295,15 @@ class SocketService {
         onParticipants?.call(callId, list);
       })
       ..on('participant-joined', (d) {
-        final callId = d['callId']?.toString() ?? '';
-        final uid = d['user']?['userId']?.toString() ?? '';
+        final callId = _normId(d['callId']);
+        final uid = _normId(d['user']?['userId']);
         final nm  = d['user']?['name']?.toString() ?? '';
         if (uid.isNotEmpty && nm.isNotEmpty) _nameById[uid] = nm;
         onParticipantJoined?.call(callId, uid, nm);
       })
       ..on('participant-left', (d) {
-        final callId = d['callId']?.toString() ?? '';
-        final uid = d['user']?['userId']?.toString() ?? d['userId']?.toString() ?? '';
+        final callId = _normId(d['callId']);
+        final uid = _normId(d['user']?['userId'] ?? d['userId']);
         final nm  = d['user']?['name']?.toString();
         if (uid.isNotEmpty) {
           _resolveName(uid, nm);
@@ -251,8 +311,8 @@ class SocketService {
         }
       })
       ..on('participant-rejected', (d) {
-        final callId = d['callId']?.toString() ?? '';
-        final uid = d['user']?['userId']?.toString() ?? d['userId']?.toString() ?? '';
+        final callId = _normId(d['callId']);
+        final uid = _normId(d['user']?['userId'] ?? d['userId']);
         final nm  = d['user']?['name']?.toString();
         if (uid.isNotEmpty) {
           _resolveName(uid, nm);
@@ -260,8 +320,8 @@ class SocketService {
         }
       })
       ..on('participant-timeout', (d) {
-        final callId = d['callId']?.toString() ?? '';
-        final uid = d['user']?['userId']?.toString() ?? d['userId']?.toString() ?? '';
+        final callId = _normId(d['callId']);
+        final uid = _normId(d['user']?['userId'] ?? d['userId']);
         final nm  = d['user']?['name']?.toString();
         if (uid.isNotEmpty) {
           _resolveName(uid, nm);
@@ -269,7 +329,7 @@ class SocketService {
         }
       })
       ..on('presence-update', (d) {
-        final uid = d['userId']?.toString() ?? '';
+        final uid = _normId(d['userId']);
         final online = d['online'] == true;
         final ls = d['lastSeen'] != null ? DateTime.fromMillisecondsSinceEpoch(d['lastSeen']) : null;
         if (uid.isNotEmpty) onPresenceUpdate?.call(uid, online, ls);
@@ -286,14 +346,14 @@ class SocketService {
         onPresenceState?.call(list);
       })
       ..on('typing', (d) {
-        final convId = d['conversationId']?.toString() ?? '';
-        final from   = d['fromUserId']?.toString() ?? '';
+        final convId = _normId(d['conversationId']);
+        final from   = _normId(d['fromUserId']);
         if (convId.isEmpty || from.isEmpty) return;
         onTyping?.call(convId, from);
       })
       ..on('stop-typing', (d) {
-        final convId = d['conversationId']?.toString() ?? '';
-        final from   = d['fromUserId']?.toString() ?? '';
+        final convId = _normId(d['conversationId']);
+        final from   = _normId(d['fromUserId']);
         if (convId.isEmpty || from.isEmpty) return;
         onStopTyping?.call(convId, from);
       })
@@ -321,7 +381,6 @@ class SocketService {
       return;
     }
 
-    // 👇 NEW: enrichir avec phone & avatar locaux (si dispos)
     String callerPhone = '';
     String avatarUrl   = '';
     try {
@@ -336,8 +395,8 @@ class SocketService {
       'recipientId': recipientId,
       'name'       : callerName,
       'callType'   : callType,
-      'callerPhone': callerPhone, // 👈 NEW
-      'avatarUrl'  : avatarUrl,   // 👈 NEW
+      'callerPhone': callerPhone,
+      'avatarUrl'  : avatarUrl,
     });
   }
 
@@ -348,7 +407,6 @@ class SocketService {
       return;
     }
 
-    // 👇 NEW: enrichir avec phone & avatar locaux (si dispos)
     String callerPhone = '';
     String avatarUrl   = '';
     try {
@@ -363,8 +421,8 @@ class SocketService {
       'memberIds' : memberIds,
       'name'      : callerName,
       'callType'  : callType,
-      'callerPhone': callerPhone, // 👈 NEW
-      'avatarUrl'  : avatarUrl,   // 👈 NEW
+      'callerPhone': callerPhone,
+      'avatarUrl'  : avatarUrl,
     });
   }
 
@@ -480,8 +538,85 @@ class SocketService {
     _activeCallId = null;
   }
 
+  /* ------------------------ Fallback timer helpers ------------------------ */
+  void _armLocalTimeout(String callId) {
+    _incomingTimers[callId]?.cancel();
+    _incomingTimers[callId] = Timer(const Duration(seconds: 32), () {
+      // si toujours "pending", on marque manqué/time-out
+      if (_pendingIncoming.contains(callId)) {
+        _handlePotentialMissed(callId, status: CallStatus.timeout);
+      }
+      _incomingTimers.remove(callId);
+    });
+  }
+
+  void _disarmLocalTimeout(String? callId) {
+    final id = (callId ?? '').trim();
+    if (id.isEmpty) return;
+    _incomingTimers.remove(id)?.cancel();
+  }
+
+  // si un appel entrant pendait et se termine par cancel/timeout/ended → log + badge (post-frame)
+  void _handlePotentialMissed(String? callId, {required CallStatus status}) {
+    final cid = _normId(callId);
+    if (cid.isEmpty) return;
+    if (!_pendingIncoming.remove(cid)) return;
+
+    _disarmLocalTimeout(cid);
+
+    final started = _incomingStart.remove(cid) ?? DateTime.now();
+    final meta = _incomingMeta.remove(cid);
+
+    final peerId = meta?['peerId'] ?? '';
+    final peerName = meta?['peerName'] ?? (peerId.isNotEmpty ? (_nameById[peerId] ?? peerId) : 'Unknown');
+    final peerAvatar = meta?['peerAvatar'] ?? (peerId.isNotEmpty ? _avatarById[peerId] : null);
+    final typeStr = (meta?['type'] ?? 'audio').toLowerCase();
+    final callType = typeStr == 'video' ? CallType.video : CallType.audio;
+
+    final ended = DateTime.now();
+    final duration = ended.difference(started).inSeconds;
+
+    final log = CallLog(
+      callId: cid,
+      peerId: peerId,
+      peerName: peerName,
+      peerAvatar: peerAvatar,
+      direction: CallDirection.incoming,
+      type: callType,
+      status: status,
+      startedAt: started,
+      endedAt: ended,
+      durationSeconds: duration < 0 ? 0 : duration,
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        final callLogCtrl = Get.isRegistered<CallLogController>()
+            ? Get.find<CallLogController>()
+            : Get.put(CallLogController(), permanent: true);
+        callLogCtrl.upsert(log);
+      } catch (e) {
+        debugPrint('[Socket] upsert CallLog error: $e');
+      }
+
+      try {
+        final badges = Get.isRegistered<UnreadBadgesController>()
+            ? Get.find<UnreadBadgesController>()
+            : Get.put(UnreadBadgesController(), permanent: true);
+        badges.incCalls();
+      } catch (e) {
+        debugPrint('[Socket] badge inc error: $e');
+      }
+    });
+  }
+
   void dispose() {
     debugPrint('[Socket] dispose()');
+    for (final t in _incomingTimers.values) {
+      try { t.cancel(); } catch (_) {}
+    }
+    _incomingTimers.clear();
+
     _socket?.disconnect();
     try { _socket?.dispose(); } catch (_) {}
     _socket   = null;

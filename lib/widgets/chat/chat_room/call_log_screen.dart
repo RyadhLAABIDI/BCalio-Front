@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 
+// ❗️IMPORTANT : on NE nettoie plus le badge ici. Le clear se fait seulement
+// quand l’onglet Calls est sélectionné (NavigationScreen).
+
 class CallLogScreen extends StatefulWidget {
   const CallLogScreen({super.key});
 
@@ -15,9 +18,8 @@ class CallLogScreen extends StatefulWidget {
 }
 
 class _CallLogScreenState extends State<CallLogScreen> {
-  late final CallLogController ctrl;
+  late CallLogController ctrl;
 
-  // ordre et libellés des filtres
   final _filters = const [
     (CallFilter.all, 'Tous'),
     (CallFilter.missed, 'Manqués'),
@@ -28,7 +30,12 @@ class _CallLogScreenState extends State<CallLogScreen> {
   @override
   void initState() {
     super.initState();
-    ctrl = Get.put(CallLogController(), permanent: true);
+
+    if (Get.isRegistered<CallLogController>()) {
+      ctrl = Get.find<CallLogController>();
+    } else {
+      ctrl = Get.put(CallLogController(), permanent: true);
+    }
   }
 
   @override
@@ -36,7 +43,6 @@ class _CallLogScreenState extends State<CallLogScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // ✅ espace top dynamique = statusBar + AppBar + barre de filtres (64) + marge
     final topInset = MediaQuery.of(context).padding.top;
     const filterBarHeight = 64.0;
     const extra = 12.0;
@@ -51,7 +57,7 @@ class _CallLogScreenState extends State<CallLogScreen> {
         title: const Text('Journal d’appel'),
         actions: [
           IconButton(
-            icon: const Icon(Iconsax.trash, color: Color.fromARGB(255, 213, 36, 23)), // rouge
+            icon: const Icon(Iconsax.trash, color: Color.fromARGB(255, 213, 36, 23)),
             tooltip: 'Effacer l’historique',
             onPressed: () async {
               final ok = await showDialog<bool>(
@@ -77,8 +83,6 @@ class _CallLogScreenState extends State<CallLogScreen> {
           child: _FiltersBar(),
         ),
       ),
-
-      // fond subtil dégradé
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -102,17 +106,15 @@ class _CallLogScreenState extends State<CallLogScreen> {
                   ? _EmptyState(topPadding: listTopPadding + 12)
                   : ListView.separated(
                       key: ValueKey('list_${ctrl.filter.value}'),
-                      padding: EdgeInsets.fromLTRB(12, listTopPadding, 12, 12), // ✅ plus sous l’AppBar
+                      padding: EdgeInsets.fromLTRB(12, listTopPadding, 12, 12),
                       itemCount: items.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (_, i) {
                         final log = items[i];
 
-                        // ✅ Pas de swipe. On affiche une petite poubelle intégrée à droite.
                         final rowWithTrash = Stack(
                           alignment: Alignment.centerRight,
                           children: [
-                            // On réserve de la place à droite pour la poubelle
                             Padding(
                               padding: const EdgeInsets.only(right: 48),
                               child: CallLogListItem(
@@ -125,14 +127,11 @@ class _CallLogScreenState extends State<CallLogScreen> {
                                 ),
                                 onCallAudio: () => CallLauncher.fromLog(log, video: false),
                                 onCallVideo: () => CallLauncher.fromLog(log, video: true),
-                                // onDelete reste fonctionnel si l'item l'utilise en interne
                                 onDelete: () {
                                   if (log.id != null) ctrl.delete(log.id!);
                                 },
                               ),
                             ),
-
-                            // petite poubelle ronde – bien calée à droite
                             Padding(
                               padding: const EdgeInsets.only(right: 6),
                               child: _InlineTrashButton(
@@ -144,7 +143,6 @@ class _CallLogScreenState extends State<CallLogScreen> {
                           ],
                         );
 
-                        // petite anim d’entrée
                         return TweenAnimationBuilder<double>(
                           key: ValueKey('log_${log.id ?? i}'),
                           tween: Tween(begin: 0.0, end: 1.0),
