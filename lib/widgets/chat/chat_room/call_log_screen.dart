@@ -1,11 +1,13 @@
 import 'dart:ui';
 import 'package:bcalio/controllers/call_log_controller.dart';
 import 'package:bcalio/services/call_launcher.dart';
+import 'package:bcalio/themes/theme.dart';
 import 'package:bcalio/widgets/chat/chat_room/call_action_sheet.dart';
 import 'package:bcalio/widgets/chat/chat_room/call_log_list_item.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
+
 
 // ❗️IMPORTANT : on NE nettoie plus le badge ici. Le clear se fait seulement
 // quand l’onglet Calls est sélectionné (NavigationScreen).
@@ -87,8 +89,8 @@ class _CallLogScreenState extends State<CallLogScreen> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: isDark
-                ? [const Color(0xFF0C0F14), const Color(0xFF11151C)]
-                : [const Color(0xFFF7F8FA), const Color(0xFFFFFFFF)],
+                ? [kDarkBgColor, const Color(0xFF11151C)]   // ← utilise la couleur dark du thème
+                : [kLightBgColor, const Color(0xFFFFFFFF)], // ← utilise la couleur light du thème
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),

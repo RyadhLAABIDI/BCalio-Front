@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
@@ -20,6 +21,10 @@ class SettingsScreen extends StatelessWidget {
     final isDarkMode = theme.brightness == Brightness.dark;
     final userCtrl = Get.find<UserController>();
 
+    // Espace de fin pour que le bouton Logout ne soit pas masqué par le bottom nav
+    final safeBottom = MediaQuery.of(context).padding.bottom;
+    final bottomSpacer = safeBottom + kBottomNavigationBarHeight + 24;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -28,7 +33,7 @@ class SettingsScreen extends StatelessWidget {
           const ProfileSection(),
           const SizedBox(height: 16),
 
-          // ---- Online Status (moderne) ----
+          // ---- Online Status (glassmorphism) ----
           Obx(() {
             final visible = userCtrl.isOnlineVisible.value;
             return _StatusCard(
@@ -47,12 +52,12 @@ class SettingsScreen extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // ---- QR Section (existant : montrer mon QR d’ajout de contact) ----
+          // ---- QR Section : Mon QR (glassmorphism) ----
           _QrCard(isDark: isDarkMode),
 
           const SizedBox(height: 12),
 
-          // ---- NOUVEAU : Scan pour connexion Web (séparé) ----
+          // ---- QR Section : Connexion Web (glassmorphism) ----
           _QrPairCard(isDark: isDarkMode),
 
           const SizedBox(height: 20),
@@ -64,14 +69,52 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: 20),
           const LanguageSection(),
           const LogoutButton(),
-          const SizedBox(height: 30),
+
+          // Espace supplémentaire pour assurer la visibilité au scroll
+          SizedBox(height: bottomSpacer),
         ],
       ),
     );
   }
 }
 
-/// Carte statut (existant)
+/// --------- Helpers visuels (glass) ----------
+BoxDecoration _glassDecoration({required bool isDark}) {
+  return BoxDecoration(
+    // ⬇️ applique les couleurs de thème demandées
+    color: isDark
+        ? kDarkPrimaryColor   // dark mode
+        : kLightPrimaryColor, // light mode
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(
+      color: isDark ? Colors.white.withOpacity(0.12) : Colors.black.withOpacity(0.08),
+      width: 1,
+    ),
+    boxShadow: [
+      if (!isDark)
+        BoxShadow(
+          color: Colors.black.withOpacity(0.06),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        )
+      else
+        BoxShadow(
+          color: Colors.black.withOpacity(0.25),
+          blurRadius: 16,
+          offset: const Offset(0, 8),
+        ),
+    ],
+  );
+}
+
+Color _tileBg(bool isDark) =>
+    isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.06);
+
+Color _titleColor(bool isDark) => isDark ? Colors.white : Colors.black87;
+Color _subColor(bool isDark) => isDark ? Colors.white.withOpacity(0.9) : Colors.black.withOpacity(0.75);
+
+/// -------------------------------------------
+/// Carte statut (glassmorphism)
 class _StatusCard extends StatelessWidget {
   final bool isDark;
   final String title;
@@ -95,269 +138,242 @@ class _StatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gradient = isDark
-        ? const LinearGradient(
-            colors: [Color(0xFF0E1B1B), Color(0xFF0B2B2B)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          )
-        : const LinearGradient(
-            colors: [Color(0xFF89C6C9), Color(0xFFB6E2E4)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          );
+    final titleColor = _titleColor(isDark);
+    final subTxt = _subColor(isDark);
+    final chipBg = isDark ? Colors.white.withOpacity(0.12) : Colors.black.withOpacity(0.06);
+    final chipTxtCol = titleColor;
+    final chipIcoCol = titleColor;
 
-    return Container(
-      decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black.withOpacity(0.25) : Colors.teal.withOpacity(0.2),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(isDark ? 0.08 : 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: Colors.white, size: 28),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              transitionBuilder: (child, anim) =>
-                  FadeTransition(opacity: anim, child: child),
-              child: Column(
-                key: ValueKey(title + subtitle),
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          decoration: _glassDecoration(isDark: isDark),
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _tileBg(isDark),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: titleColor, size: 28),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder: (child, anim) =>
+                      FadeTransition(opacity: anim, child: child),
+                  child: Column(
+                    key: ValueKey(title + subtitle),
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(chipIcon, size: 14, color: Colors.white),
-                            const SizedBox(width: 6),
-                            Text(
-                              chipText,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: titleColor, // noir en light, blanc en dark
+                              fontWeight: FontWeight.w700,
                             ),
-                          ],
-                        ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          subtitle,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Colors.white.withOpacity(0.9),
-                              ),
-                        ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: chipBg,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(chipIcon, size: 14, color: chipIcoCol),
+                                const SizedBox(width: 6),
+                                Text(
+                                  chipText, // ← dynamique
+                                  style: TextStyle(
+                                    color: chipTxtCol,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              subtitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: subTxt,
+                                  ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              // Switch coloré selon le mode
+              Switch.adaptive(
+                value: value,
+                onChanged: onChanged,
+                // pouce (identique, bien lisible)
+                activeColor: Colors.white,
+                inactiveThumbColor: Colors.white,
+                // piste (différenciée selon mode)
+                activeTrackColor: isDark
+                    ? Colors.white.withOpacity(0.35)
+                    : Theme.of(context).colorScheme.primary.withOpacity(0.55),
+                inactiveTrackColor: isDark
+                    ? Colors.white24
+                    : Colors.black26,
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Switch.adaptive(
-            value: value,
-            onChanged: onChanged,
-            activeColor: Colors.white,
-            activeTrackColor: Colors.white.withOpacity(0.35),
-            inactiveThumbColor: Colors.white,
-            inactiveTrackColor: Colors.white24,
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// Carte QR “Mon QR” (existant : QR d’ajout de contact)
+/// -------------------------------------------
+/// Carte QR “Mon QR” (glassmorphism)
 class _QrCard extends StatelessWidget {
   final bool isDark;
   const _QrCard({required this.isDark});
 
   @override
   Widget build(BuildContext context) {
-    final gradient = isDark
-        ? const LinearGradient(
-            colors: [Color(0xFF17151F), Color(0xFF1E2940)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          )
-        : const LinearGradient(
-            colors: [Color(0xFFD8E6FF), Color(0xFFEEF4FF)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          );
+    final titleColor = _titleColor(isDark);
+    final subTxt = _subColor(isDark);
 
-    return Container(
-      decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black.withOpacity(0.2) : Colors.blue.withOpacity(0.12),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(isDark ? 0.08 : 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.qr_code_2, color: Colors.white, size: 28),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Mon QR',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    )),
-                const SizedBox(height: 4),
-                Text(
-                  'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white.withOpacity(0.9),
-                  ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          decoration: _glassDecoration(isDark: isDark),
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _tileBg(isDark),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ],
-            ),
+                child: Icon(Icons.qr_code_2, color: titleColor, size: 28),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Mon QR',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: titleColor,
+                          fontWeight: FontWeight.w700,
+                        )),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: subTxt,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => Get.toNamed('/qr/my'),
+                icon: Icon(Iconsax.export_1, size: 18, color: isDark ? Colors.black : Colors.black),
+                label: const Text('Ouvrir'),
+                style: ElevatedButton.styleFrom(
+                  foregroundColor: Colors.black,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: () => Get.toNamed('/qr/my'),
-            icon: const Icon(Iconsax.export_1, size: 18),
-            label: const Text('Ouvrir'),
-            style: ElevatedButton.styleFrom(
-              foregroundColor: Colors.black,
-              backgroundColor: Colors.white,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// Carte QR “Connexion Web” (nouveau : scanner le QR du site)
+/// -------------------------------------------
+/// Carte QR “Connexion Web” (glassmorphism)
 class _QrPairCard extends StatelessWidget {
   final bool isDark;
   const _QrPairCard({required this.isDark});
 
   @override
   Widget build(BuildContext context) {
-    final gradient = isDark
-        ? const LinearGradient(
-            colors: [Color(0xFF1A1824), Color(0xFF232B45)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          )
-        : const LinearGradient(
-            colors: [Color(0xFFDDEBFF), Color(0xFFF2F7FF)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          );
+    final titleColor = _titleColor(isDark);
+    final subTxt = _subColor(isDark);
 
-    return Container(
-      decoration: BoxDecoration(
-        gradient: gradient,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: isDark ? Colors.black.withOpacity(0.18) : Colors.blue.withOpacity(0.12),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(isDark ? 0.08 : 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 28),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Connexion Web',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    )),
-                const SizedBox(height: 4),
-                Text(
-                  'Scanner le QR affiché sur le site pour ouvrir ta session.',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white.withOpacity(0.9),
-                  ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          decoration: _glassDecoration(isDark: isDark),
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: _tileBg(isDark),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ],
-            ),
+                child: Icon(Icons.qr_code_scanner, color: titleColor, size: 28),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Connexion Web',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: titleColor,
+                          fontWeight: FontWeight.w700,
+                        )),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Scanner le QR affiché sur le site pour ouvrir ta session.',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: subTxt,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => Get.toNamed('/qr/web-scan'),
+                icon: Icon(Iconsax.scan_barcode, size: 18, color: isDark ? Colors.black : Colors.black),
+                label: const Text('Scanner'),
+                style: ElevatedButton.styleFrom(
+                  foregroundColor: Colors.black,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          ElevatedButton.icon(
-            onPressed: () => Get.toNamed('/qr/web-scan'),
-            icon: const Icon(Iconsax.scan_barcode, size: 18),
-            label: const Text('Scanner'),
-            style: ElevatedButton.styleFrom(
-              foregroundColor: Colors.black,
-              backgroundColor: Colors.white,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

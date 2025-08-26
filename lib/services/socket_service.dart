@@ -14,7 +14,7 @@ import 'package:flutter/widgets.dart' show WidgetsBinding;
 class SocketService {
   static SocketService? _instance;
 
-  factory SocketService({String baseUrl = 'http://192.168.1.20:1906'}) {
+  factory SocketService({String baseUrl = 'https://backendcall.b-callio.com'}) {
     return _instance ??= SocketService._internal(baseUrl);
   }
   SocketService._internal(this.baseUrl);

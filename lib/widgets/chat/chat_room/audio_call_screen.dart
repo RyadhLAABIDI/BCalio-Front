@@ -90,7 +90,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
     final me = Get.find<UserController>();
     _rtc = WebRTCController(
-      baseUrl  : 'http://192.168.1.20:1906',
+      baseUrl  : 'https://backendcall.b-callio.com',
       callId   : '${me.userId}_${_isGroup ? 'group' : widget.recipientID}',
       selfName : me.userName,
       withVideo: false,
