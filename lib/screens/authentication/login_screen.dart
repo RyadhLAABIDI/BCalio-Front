@@ -51,7 +51,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     _createEmojis();
     loadRememberedCredentials();
 
-    _carouselTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    // ⬇️ carrousel plus lent (toutes les 4 secondes)
+    _carouselTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (_featureController.hasClients) {
         final currentPage = _featureController.page?.round() ?? 0;
         final nextPage = currentPage + 1;
@@ -685,7 +686,7 @@ class FeatureCard extends StatelessWidget {
           Icon(icon, size: 24, color: theme.colorScheme.primary),
           const SizedBox(height: 8),
           Text(
-            title,
+            title.tr, // ⬅️ traduit
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -694,7 +695,7 @@ class FeatureCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            description,
+            description.tr, // ⬅️ traduit
             style: GoogleFonts.poppins(fontSize: 12, height: 1.25),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,

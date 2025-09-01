@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:bcalio/services/http_errors.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../models/contact_model.dart';
@@ -12,6 +13,8 @@ class ContactApiService {
     if (response.statusCode == 200) {
       final List<dynamic> contactsJson = json.decode(response.body);
       return contactsJson.map((json) => Contact.fromJson(json)).toList();
+    } else if (response.statusCode == 401) {
+      throw UnauthorizedException(response.body);
     } else {
       throw Exception('Failed to fetch contacts: ${response.body}');
     }
@@ -25,6 +28,8 @@ class ContactApiService {
       final List<dynamic> contactsJson = json.decode(response.body);
       debugPrint('getAllContacts payload: ${contactsJson.length} users');
       return contactsJson.map((json) => Contact.fromJson(json)).toList();
+    } else if (response.statusCode == 401) {
+      throw UnauthorizedException(response.body);
     } else {
       throw Exception('Failed to fetch contacts: ${response.body}');
     }
@@ -47,28 +52,29 @@ class ContactApiService {
     debugPrint('Add Contact Status: ${response.statusCode}');
     debugPrint('Add Contact Body: ${response.body}');
 
-    if (response.statusCode != 200) {
+    if (response.statusCode == 200) {
+      final body = json.decode(response.body);
+      if (body == null) throw Exception('API response is null');
+
+      if (body is Map && body.containsKey('contact')) {
+        return Contact.fromJson(body['contact']);
+      }
+
+      final msg = (body['message'] ?? '').toString();
+      if (msg == 'Contact added successfully' || msg == 'Contact already added') {
+        return Contact(id: contactId, name: '', email: '', image: null, phoneNumber: '');
+      }
+
+      throw Exception(body['message'] ?? 'Unknown API response');
+    } else if (response.statusCode == 401) {
+      throw UnauthorizedException(response.body);
+    } else {
       throw Exception('Failed to add contact: ${response.body}');
     }
-
-    final body = json.decode(response.body);
-    if (body == null) throw Exception('API response is null');
-
-    if (body is Map && body.containsKey('contact')) {
-      return Contact.fromJson(body['contact']);
-    }
-
-    final msg = (body['message'] ?? '').toString();
-    if (msg == 'Contact added successfully' || msg == 'Contact already added') {
-      return Contact(id: contactId, name: '', email: '', image: null, phoneNumber: '');
-    }
-
-    throw Exception(body['message'] ?? 'Unknown API response');
   }
 
-  /// Récupère le user (Contact) par ID, pour compléter numéro/nom/email.
+  /// Récupère le user (Contact) par ID
   Future<Contact?> getUserById(String token, String userId) async {
-    // Essais directs connus
     for (final candidate in <Uri>[
       Uri.parse('$baseUrl/mobile/users/$userId'),
       Uri.parse('$baseUrl/mobile/users?id=$userId'),
@@ -89,13 +95,14 @@ class ContactApiService {
               return Contact.fromJson(found);
             }
           }
+        } else if (r.statusCode == 401) {
+          throw UnauthorizedException(r.body);
         }
       } catch (e) {
         debugPrint('getUserById try ${candidate.toString()} error: $e');
       }
     }
 
-    // Fallback: liste complète
     try {
       final rAll = await http.get(
         Uri.parse('$baseUrl/mobile/users'),
@@ -110,11 +117,12 @@ class ContactApiService {
               );
           if (match != null) return Contact.fromJson(match);
         }
+      } else if (rAll.statusCode == 401) {
+        throw UnauthorizedException(rAll.body);
       }
     } catch (e) {
       debugPrint('getUserById fallback /mobile/users error: $e');
     }
-
     return null;
   }
 }

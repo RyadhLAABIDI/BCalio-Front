@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
+import 'package:collection/collection.dart'; // pour firstWhereOrNull
 
 import 'socket_service.dart';
 import '../models/participant.dart';
@@ -156,10 +157,28 @@ class WebRTCController extends GetxController {
     String remoteId, {
     required bool initiator,
   }) async {
+    // Force TURN pour valider en 3G/4G/5G (met à false plus tard pour revenir à 'all').
+    const bool forceRelay=false;
+
     final pc = await rtc.createPeerConnection({
       'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
+        { 'urls': ['stun:fr-turn3.xirsys.com'] },
+        {
+          'urls': [
+            'turn:fr-turn3.xirsys.com:80?transport=udp',
+            'turn:fr-turn3.xirsys.com:3478?transport=udp',
+            'turn:fr-turn3.xirsys.com:80?transport=tcp',
+            'turn:fr-turn3.xirsys.com:3478?transport=tcp',
+            'turns:fr-turn3.xirsys.com:443?transport=tcp',
+            'turns:fr-turn3.xirsys.com:5349?transport=tcp',
+          ],
+          'username': 'oOk-ca-e8130Y5GOX_DTijaY3lpYLXkH8ecECdK_e_VBpGN6eQ9cJaansd7UkQ3DAAAAAGiuNflCQ2FsaW8=',
+          'credential': '8aa96840-82cc-11f0-97ad-e25abca605ee',
+        },
       ],
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
+      'iceTransportPolicy': forceRelay ? 'relay' : 'all',
     });
 
     if (initiator) {

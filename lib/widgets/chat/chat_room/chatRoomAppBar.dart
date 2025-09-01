@@ -50,10 +50,10 @@ class _ChatRoomAppBarState extends State<ChatRoomAppBar>
 
   String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt);
-    if (diff.inSeconds < 60) return 'Vu à l’instant';
-    if (diff.inMinutes < 60) return 'Vu il y a ${diff.inMinutes} min';
-    if (diff.inHours   < 24) return 'Vu il y a ${diff.inHours} h';
-    return 'Vu le ${dt.day.toString().padLeft(2,'0')}/${dt.month.toString().padLeft(2,'0')}/${dt.year}';
+    if (diff.inSeconds < 60) return 'Vu à l’instant'.tr;
+    if (diff.inMinutes < 60) return '${'Vu il y a'.tr} ${diff.inMinutes} ${'min'.tr}';
+    if (diff.inHours   < 24) return '${'Vu il y a'.tr} ${diff.inHours} ${'h'.tr}';
+    return '${'Vu le'.tr} ${dt.day.toString().padLeft(2,'0')}/${dt.month.toString().padLeft(2,'0')}/${dt.year}';
   }
 
   @override
@@ -169,24 +169,24 @@ class _ChatRoomAppBarState extends State<ChatRoomAppBar>
         if ((_conv?.isGroup ?? false) && _memberIds.isNotEmpty) {
           final onlineCount = _memberIds.where((id) => uc.isOnline(id)).length;
           final text = onlineCount > 0
-              ? '$onlineCount en ligne'
-              : 'Hors ligne';
+              ? '$onlineCount ${'en ligne'.tr}'
+              : 'Hors ligne'.tr;
           return Text(text,
               style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(.7)));
         }
 
         // 1:1
         if (widget.recipientID.isEmpty) {
-          return Text('Hors ligne',
+          return Text('Hors ligne'.tr,
               style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(.7)));
         }
         if (uc.isOnline(widget.recipientID)) {
-          return const Text('En ligne',
-              style: TextStyle(fontSize: 12, color: Colors.white));
+          return Text('En ligne'.tr,
+              style: const TextStyle(fontSize: 12, color: Colors.white));
         }
         final ls = uc.lastSeenOf(widget.recipientID);
         return Text(
-          ls != null ? _timeAgo(ls) : 'Hors ligne',
+          ls != null ? _timeAgo(ls) : 'Hors ligne'.tr,
           style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(.7)),
         );
       });

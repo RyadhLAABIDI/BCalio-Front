@@ -221,32 +221,32 @@ class _FrostedModernNavBar extends StatelessWidget {
                     selectedIndex: selectedIndex,
                     onDestinationSelected: onSelected,
                     labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-                    destinations: const [
+                    destinations: [
                       NavigationDestination(
-                        icon: Icon(Icons.location_on_outlined),
-                        selectedIcon: Icon(Icons.location_on),
-                        label: 'Location',
+                        icon: const Icon(Icons.location_on_outlined),
+                        selectedIcon: const Icon(Icons.location_on),
+                        label: 'Location'.tr,
                       ),
                       NavigationDestination(
-                        icon: Icon(Icons.chat_outlined),
-                        selectedIcon: Icon(Icons.chat),
-                        label: 'Chat',
+                        icon: const Icon(Icons.chat_outlined),
+                        selectedIcon: const Icon(Icons.chat),
+                        label: 'Chat'.tr,
                       ),
                       NavigationDestination(
-                        icon: Icon(Icons.person_add_outlined),
-                        selectedIcon: Icon(Icons.person_add),
-                        label: 'Contact',
+                        icon: const Icon(Icons.person_add_outlined),
+                        selectedIcon: const Icon(Icons.person_add),
+                        label: 'Contact'.tr,
                       ),
                       // Calls avec fond rouge + compteur si non lu
                       NavigationDestination(
-                        icon: _CallsIcon(selected: false),
-                        selectedIcon: _CallsIcon(selected: true),
-                        label: 'Calls',
+                        icon: const _CallsIcon(selected: false),
+                        selectedIcon: const _CallsIcon(selected: true),
+                        label: 'Calls'.tr,
                       ),
                       NavigationDestination(
-                        icon: Icon(Icons.settings_outlined),
-                        selectedIcon: Icon(Icons.settings),
-                        label: 'Settings',
+                        icon: const Icon(Icons.settings_outlined),
+                        selectedIcon: const Icon(Icons.settings),
+                        label: 'Settings'.tr,
                       ),
                     ],
                   ),

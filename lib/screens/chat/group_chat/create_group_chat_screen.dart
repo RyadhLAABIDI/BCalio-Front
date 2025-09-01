@@ -64,7 +64,7 @@ class _CreateGroupChatScreenState extends State<CreateGroupChatScreen> {
     try {
       isLoading.value = true;
       final message =
-          "Try B-callio Now! Download it from Google Play: https://play.google.com/store/apps/details?id=com.elite.bcalio&pcampaignid=web_share";
+          "Try B-callio Now! Download it from Google Play: https://play.google.com/store/apps/details?id=com.elite.bcalio.app&pcampaignid=web_share";
       for (var contact in contacts) {
         debugPrint('phone number contact ============${removeSubstring(contact.phoneNumber!)}');
         if (contact.isPhoneContact) {
@@ -89,7 +89,7 @@ class _CreateGroupChatScreenState extends State<CreateGroupChatScreen> {
   Future<void> _handleAddSingleContact(Contact contact) async {
     try {
       final message =
-          "Try B-callio Now! Download it from Google Play: https://play.google.com/store/apps/details?id=com.elite.bcalio&pcampaignid=web_share";
+          "Try B-callio Now! Download it from Google Play: https://play.google.com/store/apps/details?id=com.elite.bcalio.app&pcampaignid=web_share";
       debugPrint('Sending SMS to: ${contact.phoneNumber}');
       final success = await smsService.sendMessage(
         removeSubstring(contact.phoneNumber!),

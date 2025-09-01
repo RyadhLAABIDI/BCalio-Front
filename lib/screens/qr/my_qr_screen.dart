@@ -47,8 +47,9 @@ class _MyQrScreenState extends State<MyQrScreen> {
       });
       _startTicker();
     } catch (e) {
+      // On garde l'erreur interne, mais on affichera un message UX propre.
       setState(() {
-        _error = 'Erreur: $e';
+        _error = '${'Erreur'.tr}: $e';
       });
     } finally {
       setState(() {
@@ -66,14 +67,72 @@ class _MyQrScreenState extends State<MyQrScreen> {
   }
 
   String _remaining() {
-    if (_expiresAt == null) return 'Sans expiration';
+    if (_expiresAt == null) return 'Sans expiration'.tr;
     final now = DateTime.now();
-    if (_expiresAt!.isBefore(now)) return 'Expiré • Régénérer';
+    if (_expiresAt!.isBefore(now)) return 'Expiré • Régénérer'.tr;
     final d = _expiresAt!.difference(now);
     final days = d.inDays;
     final hours = d.inHours % 24;
     final mins = d.inMinutes % 60;
-    return 'Expire dans ${days}j ${hours}h ${mins}m';
+    return '${'Expire dans'.tr} ${days}${'j'.tr} ${hours}${'h'.tr} ${mins}${'m'.tr}';
+  }
+
+  Widget _buildErrorView(BuildContext context) {
+    final theme = Theme.of(context);
+    final cardColor = theme.colorScheme.surface;
+    final textColor = theme.colorScheme.onSurface;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(theme.brightness == Brightness.dark ? 0.35 : 0.08),
+              blurRadius: 18,
+              offset: const Offset(0, 10),
+            ),
+          ],
+          border: Border.all(
+            color: theme.colorScheme.primary.withOpacity(0.15),
+            width: 1.2,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Emoji "moderne"
+            Text('🌐⚠️', style: const TextStyle(fontSize: 44)),
+            const SizedBox(height: 10),
+            Text(
+              'connection_issue'.tr,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: textColor,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'check_connection'.tr,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: textColor.withOpacity(0.8),
+              ),
+            ),
+            const SizedBox(height: 14),
+            ElevatedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: Text('Réessayer'.tr),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -82,14 +141,15 @@ class _MyQrScreenState extends State<MyQrScreen> {
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Mon QR')),
+      appBar: AppBar(title: Text('Mon QR'.tr)),
       body: Center(
         child: _loading
             ? const CircularProgressIndicator()
             : (_error != null)
-                ? Text(_error!)
+                // 👉 Au lieu d'un texte brut moche, on montre une carte élégante
+                ? _buildErrorView(context)
                 : (_qrText == null)
-                    ? const Text('Aucun QR')
+                    ? Text('Aucun QR'.tr)
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -97,7 +157,7 @@ class _MyQrScreenState extends State<MyQrScreen> {
                           Container(
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.white, // ✅ fond clair garanti
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: [
                                 if (isDark)
@@ -119,7 +179,6 @@ class _MyQrScreenState extends State<MyQrScreen> {
                               version: QrVersions.auto,
                               size: 260,
                               gapless: true,
-                              // ✅ couleurs forcées (noir sur blanc) pour lisibilité
                               backgroundColor: Colors.white,
                               eyeStyle: const QrEyeStyle(
                                 eyeShape: QrEyeShape.square,
@@ -140,7 +199,7 @@ class _MyQrScreenState extends State<MyQrScreen> {
                           ElevatedButton.icon(
                             onPressed: _load,
                             icon: const Icon(Icons.refresh),
-                            label: const Text('Régénérer'),
+                            label: Text('Régénérer'.tr),
                           ),
                         ],
                       ),

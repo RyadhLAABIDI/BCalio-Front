@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:bcalio/controllers/user_controller.dart';
 import 'package:flutter_contacts/flutter_contacts.dart' as phone_contacts;
 import 'package:flutter/material.dart';
@@ -33,11 +34,9 @@ class ContactController extends GetxController {
     super.onInit();
     loadContactPermissionPreference();
     checkContactsPermission();
-    final token = await userController.getToken();
-    if (token != null && token.isNotEmpty) {
-      await loadCachedContacts();
-      await fetchContacts(token);
-    }
+    // on ne bloque pas si pas de token : withAuthRetry s’en charge
+    await loadCachedContacts();
+    await fetchContacts('');
   }
 
   /* ─────────────────────────── utils ─────────────────────────── */
@@ -127,11 +126,12 @@ class ContactController extends GetxController {
 
   /* ───────────── fetch API / téléphone ───────────── */
 
-  Future<void> fetchContacts(String token) async {
+  Future<void> fetchContacts(String _ignored) async {
     isLoading.value = true;
     try {
-      if (token.isEmpty) return;
-      final fetchedContacts = await contactApiService.getContacts(token);
+      final fetchedContacts = await userController.withAuthRetry<List<Contact>>(
+        (t) => contactApiService.getContacts(t),
+      );
       originalApiContacts.assignAll(fetchedContacts);
     } catch (e) {
       Get.snackbar('Erreur', e.toString());
@@ -140,10 +140,12 @@ class ContactController extends GetxController {
     }
   }
 
-  Future<void> fetchAllContacts(String token) async {
+  Future<void> fetchAllContacts(String _ignored) async {
     isLoading.value = true;
     try {
-      final fetchedContacts = await contactApiService.getAllContacts(token);
+      final fetchedContacts = await userController.withAuthRetry<List<Contact>>(
+        (t) => contactApiService.getAllContacts(t),
+      );
       originalAllApiContacts.assignAll(fetchedContacts);
       allContacts.assignAll(fetchedContacts);
     } catch (e) {
@@ -187,19 +189,14 @@ class ContactController extends GetxController {
 
   Future<void> fetchContactsFromApiPhone() async {
     debugPrint('Fetching contacts...');
-    final token = await userController.getToken();
-    if (token == null || token.isEmpty) {
-      Get.snackbar("Erreur", "Échec de la récupération du token. Veuillez vous reconnecter.");
-      return;
-    }
 
     try {
       isLoading.value = true;
       await loadCachedContacts();
       final cachedContacts = List<Contact>.from(contacts);
 
-      await fetchContacts(token);
-      await fetchAllContacts(token);
+      await fetchContacts('');
+      await fetchAllContacts('');
 
       final phoneContacts = await fetchPhoneContacts();
       originalPhoneContacts.assignAll(phoneContacts);
@@ -328,7 +325,7 @@ class ContactController extends GetxController {
      — utile pour tes autres écrans, pas utilisé par le flow QR —  */
 
   Future<void> addContact(
-    String token,
+    String _ignoredToken,
     String contactId,
     String name,
     String phone,
@@ -344,11 +341,15 @@ class ContactController extends GetxController {
         return;
       }
 
-      // Appel API centrale (tes autres flows)
-      final added = await contactApiService.addContact(token, contactId);
+      // Appel API centrale via retry auth
+      final added = await userController.withAuthRetry<Contact>(
+        (t) => contactApiService.addContact(t, contactId),
+      );
 
       // Enrichir avec user details (pour récupérer numéro)
-      final details = await contactApiService.getUserById(token, contactId);
+      final details = await userController.withAuthRetry<Contact?>(
+        (t) => contactApiService.getUserById(t, contactId),
+      );
       final merged = Contact(
         id: added.id.isNotEmpty ? added.id : (details?.id ?? ''),
         name: added.name.isNotEmpty ? added.name : (details?.name ?? ''),

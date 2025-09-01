@@ -378,6 +378,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
   }
 
   Widget _buildNameStep(ThemeData theme) {
+    final isDarkMode = theme.brightness == Brightness.dark; // ← pour choisir la couleur des boutons
     return Column(
       children: [
         Text(
@@ -430,6 +431,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
                       currentStep.value = 0;
                     },
                     style: ElevatedButton.styleFrom(
+                      backgroundColor: isDarkMode ? kDarkPrimaryColor : kAccentColor, // ← BACK BTN
                       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -438,14 +440,14 @@ class _AddContactScreenState extends State<AddContactScreen> {
                     child: Text(
                       "back".tr,
                       style: theme.textTheme.bodyLarge?.copyWith(
-                        color: theme.colorScheme.onSurface,
+                        color: theme.colorScheme.onPrimary, // lisible sur fond coloré
                       ),
                     ),
                   ),
                   ElevatedButton(
                     onPressed: checkAndAddContact,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: theme.appBarTheme.backgroundColor,
+                      backgroundColor: isDarkMode ? kDarkPrimaryColor : kAccentColor, // ← SAVE BTN
                       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),

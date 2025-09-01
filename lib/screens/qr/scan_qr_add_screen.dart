@@ -60,14 +60,14 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
       // 1) Résoudre le QR via Node → { ok, contactId, profile? }
       final qrRes = await api.addByQrText(raw);
       if (qrRes['ok'] != true) {
-        _flash('Échec QR: ${qrRes['error'] ?? 'inconnu'}');
+        _flash('${'Échec QR'.tr}: ${qrRes['error'] ?? 'inconnu'.tr}');
         setState(() => _busy = false);
         return;
       }
 
       final contactId = (qrRes['contactId'] ?? '').toString();
       if (contactId.isEmpty) {
-        _flash('QR invalide: contactId manquant');
+        _flash('${'QR invalide'.tr}: ${'contactId manquant'.tr}');
         setState(() => _busy = false);
         return;
       }
@@ -89,23 +89,25 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
 
       // 3) Exiger un numéro pour pouvoir écrire dans le carnet
       if (phone.isEmpty) {
-        _flash("Utilisateur trouvé, mais son numéro n'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.");
+        _flash(
+          'Utilisateur trouvé, mais son numéro n\'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.'.tr,
+        );
         setState(() => _busy = false);
         return;
       }
 
-      // 4) Ajout style “manuel” : carnet du tel + liste locale (isPhoneContact)
+      // 4) Ajout style “manuel”
       await contactCtrl.addPhoneContactFromQr(
         name: (name.isNotEmpty ? name : contactId),
         phone: phone,
         email: email,
       );
 
-      _flash('Contact ajouté${name.isNotEmpty ? " : $name" : ""}');
+      _flash('${'Contact ajouté'.tr}${name.isNotEmpty ? " : $name" : ""}');
       await Future.delayed(const Duration(milliseconds: 500));
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      _flash('Erreur: $e');
+      _flash('${'Erreur'.tr}: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -114,7 +116,7 @@ class _ScanQrAddScreenState extends State<ScanQrAddScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Ajouter via QR')),
+      appBar: AppBar(title: Text('Ajouter via QR'.tr)),
       body: Stack(
         children: [
           MobileScanner(controller: _controller, onDetect: _onDetect),

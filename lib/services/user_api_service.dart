@@ -7,13 +7,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/AuthResponse_model.dart';
 import '../models/true_user_model.dart';
 import '../utils/misc.dart';
+import 'http_errors.dart'; // ⬅️
 
 class UserApiService {
   final cloudinary = Cloudinary.unsignedConfig(
     cloudName: cloudName,
   );
 
-  /// Upload Image to Cloudinary
   Future<String?> uploadImageToCloudinary(File image) async {
     try {
       final response = await cloudinary.unsignedUpload(
@@ -28,15 +28,13 @@ class UserApiService {
       if (response.isSuccessful) {
         return response.secureUrl;
       } else {
-        throw Exception(
-            'Failed to upload image: ${response.error?.toString()}');
+        throw Exception('Failed to upload image: ${response.error?.toString()}');
       }
     } catch (e) {
       throw Exception('Cloudinary upload error: $e');
     }
   }
 
-  /// Register User
   Future<User> register({
     required String email,
     required String password,
@@ -52,7 +50,7 @@ class UserApiService {
       'phoneNumber': phoneNumber,
     };
 
-    debugPrint('Register payload: $payload'); // Debug payload
+    debugPrint('Register payload: $payload');
 
     final response = await http.post(
       url,
@@ -60,21 +58,18 @@ class UserApiService {
       body: json.encode(payload),
     );
 
-    debugPrint(
-        'Register response status: ${response.statusCode}'); // Debug response status
-    debugPrint(
-        'Register response body: ${response.body}'); // Debug response body
+    debugPrint('Register response status: ${response.statusCode}');
+    debugPrint('Register response body: ${response.body}');
 
     if (response.statusCode == 200) {
       final user = User.fromJson(json.decode(response.body));
-      debugPrint('Parsed User: $user'); // Debug parsed user
+      debugPrint('Parsed User: $user');
       return user;
     } else {
       throw Exception('Failed to register: ${response.body}');
     }
   }
 
-  /// Login User
   Future<AuthResponse> login({
     required String email,
     required String password,
@@ -93,7 +88,6 @@ class UserApiService {
     }
   }
 
-  /// Update Profile
   Future<User> updateProfile({
     required String name,
     required String image,
@@ -104,7 +98,6 @@ class UserApiService {
   }) async {
     final url = Uri.parse('$baseUrl/user/update');
 
-    // Retrieve token from SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token == null) {
@@ -120,7 +113,7 @@ class UserApiService {
       "rfcToken": rfcToken
     };
 
-    debugPrint('Update payload: $payload'); // Debug payload
+    debugPrint('Update payload: $payload');
 
     final response = await http.post(
       url,
@@ -136,12 +129,13 @@ class UserApiService {
 
     if (response.statusCode == 200) {
       return User.fromJson(json.decode(response.body));
+    } else if (response.statusCode == 401) {
+      throw UnauthorizedException(response.body);
     } else {
       throw Exception('Failed to update profile: ${response.body}');
     }
   }
 
-  /// Fetch Users
   Future<List<User>> fetchUsers(String token) async {
     final url = Uri.parse('$baseUrl/mobile/users');
     final response = await http.get(
@@ -155,6 +149,8 @@ class UserApiService {
     if (response.statusCode == 200) {
       final List<dynamic> usersJson = json.decode(response.body);
       return usersJson.map((json) => User.fromJson(json)).toList();
+    } else if (response.statusCode == 401) {
+      throw UnauthorizedException(response.body);
     } else {
       throw Exception('Failed to fetch users: ${response.body}');
     }
@@ -172,7 +168,7 @@ class UserApiService {
         final userJson = json.decode(response.body);
         debugPrint('User JSON: $userJson');
 
-        final user = User.fromJson(userJson); // ✅ التعديل هنا
+        final user = User.fromJson(userJson);
         debugPrint('Parsed User: $user');
         return user;
       } else {

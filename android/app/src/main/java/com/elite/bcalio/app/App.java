@@ -1,4 +1,4 @@
-package com.elite.bcalio;
+package com.elite.bcalio.app;
 
 import android.app.Application;
 

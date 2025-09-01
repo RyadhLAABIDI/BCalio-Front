@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.elite.bcalio">
+    package="com.elite.bcalio.app">
 
     <!-- Permissions -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -26,7 +26,7 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
-        android:label="B-Callio"
+        android:label="BCallio"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:supportsPictureInPicture="true"
@@ -85,10 +85,10 @@
             android:name=".CallActionReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.elite.bcalio.ACTION_ACCEPT_CALL" />
-                <action android:name="com.elite.bcalio.ACTION_REJECT_CALL" />
-                <action android:name="com.elite.bcalio.ACTION_TIMEOUT_CALL" />
-                <action android:name="com.elite.bcalio.ACTION_INCOMING_DELETE" />
+                <action android:name="com.elite.bcalio.app.ACTION_ACCEPT_CALL" />
+                <action android:name="com.elite.bcalio.app.ACTION_REJECT_CALL" />
+                <action android:name="com.elite.bcalio.app.ACTION_TIMEOUT_CALL" />
+                <action android:name="com.elite.bcalio.app.ACTION_INCOMING_DELETE" />
             </intent-filter>
         </receiver>
 

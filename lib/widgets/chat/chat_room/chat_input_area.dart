@@ -101,6 +101,10 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
     final theme = Theme.of(context);
     final isDarkMode = theme.brightness == Brightness.dark;
 
+    // Couleurs du bouton d'action (envoyer / micro)
+    final Color actionBg = theme.appBarTheme.backgroundColor ?? theme.colorScheme.primary;
+    final Color actionIconColor = isDarkMode ? Colors.white : Colors.black;
+
     return Obx(() {
       if (widget.isRecording.value) {
         return Container(
@@ -142,7 +146,7 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
               Expanded(
                 child: Text(
                   "Recording...".tr,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 16,
                     color: Colors.red,
                     fontWeight: FontWeight.w600,
@@ -212,7 +216,7 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
                   focusNode: _focusNode,
                   controller: _messageController,
                   maxLines: null,
-                  onChanged: widget.onChanged, // NEW: propage la saisie
+                  onChanged: widget.onChanged, // propage la saisie
                   decoration: InputDecoration(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     hintText: "Type a message".tr,
@@ -239,7 +243,7 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
                       final message = _messageController.text.trim();
                       if (message.isNotEmpty) {
                         _messageController.clear();
-                        // NEW: prévenir controller que le champ est vide → stop-typing
+                        // prévenir controller que le champ est vide → stop-typing
                         widget.onChanged?.call('');
                         widget.onSend(message);
                       }
@@ -247,21 +251,21 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: theme.appBarTheme.backgroundColor,
+                  color: actionBg,
                   shape: BoxShape.circle,
                 ),
                 child: widget.isSending.value
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor: AlwaysStoppedAnimation<Color>(actionIconColor),
                         ),
                       )
                     : Icon(
                         _isTextEmpty ? Iconsax.microphone : Iconsax.send_1,
-                        color: Colors.white,
+                        color: actionIconColor, // ← noir en light, blanc en dark
                         size: 24,
                       ),
               ),

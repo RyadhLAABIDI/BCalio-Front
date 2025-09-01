@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 
-
 // ❗️IMPORTANT : on NE nettoie plus le badge ici. Le clear se fait seulement
 // quand l’onglet Calls est sélectionné (NavigationScreen).
 
@@ -56,22 +55,22 @@ class _CallLogScreenState extends State<CallLogScreen> {
         elevation: 0,
         backgroundColor: Colors.transparent,
         titleSpacing: 16,
-        title: const Text('Journal d’appel'),
+        title: Text('Journal d’appel'.tr),
         actions: [
           IconButton(
             icon: const Icon(Iconsax.trash, color: Color.fromARGB(255, 213, 36, 23)),
-            tooltip: 'Effacer l’historique',
+            tooltip: 'Effacer l’historique'.tr,
             onPressed: () async {
               final ok = await showDialog<bool>(
                 context: context,
                 builder: (ctx) => AlertDialog(
-                  title: const Text('Effacer l’historique ?'),
-                  content: const Text('Cette action est irréversible.'),
+                  title: Text('Effacer l’historique ?'.tr),
+                  content: Text('Cette action est irréversible.'.tr),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text('Annuler'.tr)),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Effacer', style: TextStyle(color: Colors.red)),
+                      child: Text('Effacer'.tr, style: const TextStyle(color: Colors.red)),
                     ),
                   ],
                 ),
@@ -89,8 +88,8 @@ class _CallLogScreenState extends State<CallLogScreen> {
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: isDark
-                ? [kDarkBgColor, const Color(0xFF11151C)]   // ← utilise la couleur dark du thème
-                : [kLightBgColor, const Color(0xFFFFFFFF)], // ← utilise la couleur light du thème
+                ? [kDarkBgColor, const Color(0xFF11151C)]
+                : [kLightBgColor, const Color(0xFFFFFFFF)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -187,7 +186,7 @@ class _InlineTrashButton extends StatelessWidget {
           color: enabled ? Colors.red.withOpacity(.10) : Colors.transparent,
         ),
         child: IconButton(
-          tooltip: 'Supprimer',
+          tooltip: 'Supprimer'.tr,
           onPressed: onPressed,
           iconSize: 18,
           splashRadius: 20,
@@ -229,11 +228,11 @@ class _FiltersBar extends StatelessWidget {
             ),
             child: Obx(() {
               final current = ctrl.filter.value;
-              final filters = const [
-                (CallFilter.all, 'Tous'),
-                (CallFilter.missed, 'Manqués'),
-                (CallFilter.incoming, 'Entrants'),
-                (CallFilter.outgoing, 'Sortants'),
+              final filters = [
+                (CallFilter.all, 'Tous'.tr),
+                (CallFilter.missed, 'Manqués'.tr),
+                (CallFilter.incoming, 'Entrants'.tr),
+                (CallFilter.outgoing, 'Sortants'.tr),
               ];
               return SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -324,14 +323,14 @@ class _EmptyState extends StatelessWidget {
             Icon(Iconsax.call_slash, size: 56, color: theme.disabledColor),
             const SizedBox(height: 16),
             Text(
-              'Aucun appel pour le moment.',
+              'Aucun appel pour le moment.'.tr,
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 6),
             Text(
-              'Les appels récents apparaîtront ici.',
+              'Les appels récents apparaîtront ici.'.tr,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.textTheme.bodyMedium?.color?.withOpacity(.7),
               ),

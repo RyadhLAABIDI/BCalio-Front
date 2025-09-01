@@ -176,14 +176,30 @@ class _OTPVerificationPageState extends State<OTPVerificationPage> {
     setState(() => _loading = true);
     final enteredOtp = _pinController.text.trim();
     final expectedOtp = Get.arguments['otp'];
+
     if (enteredOtp == expectedOtp) {
       showSuccessSnackbar("OTP_verified_successfully!".tr);
+
       final prefs = await SharedPreferences.getInstance();
-      final isForgotPassword = prefs.getBool('isForgotPassword') ?? false;
-      debugPrint("isForgotPassword: $isForgotPassword");
-      isForgotPassword
-          ? Get.to(const NewPasswordPage())
-          : Get.toNamed('/createProfile', arguments: {'phoneNumber': Get.arguments['phoneNumber']});
+
+      // 1) lire l’argument 'flow' s’il est présent
+      final argFlow = Get.arguments['flow'];
+      // 2) fallback sur SharedPreferences si pas d’argument
+      final isForgotPasswordFlag = prefs.getBool('isForgotPassword') ?? false;
+      final flow = (argFlow is String && argFlow.isNotEmpty)
+          ? argFlow
+          : (isForgotPasswordFlag ? 'forgot' : 'signup');
+
+      debugPrint('OTP flow = $flow (arg=$argFlow, sp=$isForgotPasswordFlag)');
+
+      // Optionnel : nettoyer le flag persistant une fois utilisé
+      await prefs.remove('isForgotPassword');
+
+      if (flow == 'forgot') {
+        Get.to(const NewPasswordPage());
+      } else {
+        Get.toNamed('/createProfile', arguments: {'phoneNumber': Get.arguments['phoneNumber']});
+      }
     } else {
       showErrorSnackbar("invalid_OTP_please_try_again.".tr);
     }

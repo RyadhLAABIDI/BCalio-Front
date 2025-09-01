@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/material.dart';           // ← pour Get.snackbar + Colors
-import 'package:flutter/widgets.dart';            // ← pour WidgetsBinding.instance.lifecycleState
+import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,8 +11,7 @@ import '../models/true_message_model.dart';
 import '../services/conversation_api_service.dart';
 import '../widgets/base_widget/custom_snack_bar.dart';
 import 'user_controller.dart';
-
-// ⚠️ IMPORTANT : on supprime toute notif locale Flutter pour “chat”.
+import '../services/http_errors.dart';
 
 class ConversationController extends GetxController {
   final ConversationApiService conversationApiService;
@@ -27,12 +26,9 @@ class ConversationController extends GetxController {
   @override
   void onInit() async {
     super.onInit();
-    final token = await Get.find<UserController>().getToken();
-    if (token != null && token.isNotEmpty) {
-      await loadCachedConversations();
-      await fetchConversations(token);
-      startPolling(token);
-    }
+    await loadCachedConversations();
+    await fetchConversations(''); // token ignoré, on utilise withAuthRetry
+    startPolling('');             // idem
   }
 
   @override
@@ -41,11 +37,13 @@ class ConversationController extends GetxController {
     super.onClose();
   }
 
-  Future<void> fetchConversations(String token) async {
+  Future<void> fetchConversations(String _ignored) async {
     isLoading.value = true;
     try {
-      final fetchedConversations =
-          await conversationApiService.getConversations(token);
+      final userCtrl = Get.find<UserController>();
+      final fetchedConversations = await userCtrl.withAuthRetry<List<Conversation>>(
+        (t) => conversationApiService.getConversations(t),
+      );
       conversations.value = fetchedConversations;
       _saveConversationsToCache(fetchedConversations);
       debugPrint('Conversations récupérées: ${conversations.length}');
@@ -58,8 +56,7 @@ class ConversationController extends GetxController {
 
   Future<void> _saveConversationsToCache(List<Conversation> conversations) async {
     final prefs = await SharedPreferences.getInstance();
-    final jsonList =
-        conversations.map((conversation) => conversation.toJson()).toList();
+    final jsonList = conversations.map((c) => c.toJson()).toList();
     prefs.setString('cachedConversations', jsonEncode(jsonList));
     debugPrint('Toutes les conversations sauvegardées en cache: ${conversations.length}');
   }
@@ -70,8 +67,7 @@ class ConversationController extends GetxController {
       final cachedConversations = prefs.getString('cachedConversations');
       if (cachedConversations != null) {
         final List<dynamic> jsonList = jsonDecode(cachedConversations);
-        final allConversation =
-            jsonList.map((json) => Conversation.fromJson(json)).toList();
+        final allConversation = jsonList.map((json) => Conversation.fromJson(json)).toList();
         conversations.value = allConversation;
         debugPrint('Conversations chargées depuis cache: ${conversations.length}');
       }
@@ -80,17 +76,19 @@ class ConversationController extends GetxController {
     }
   }
 
-  Future<void> refreshConversations(String token) async {
+  Future<void> refreshConversations(String _ignored) async {
     try {
-      final updatedConversations =
-          await conversationApiService.getConversations(token);
-      conversations.value = updatedConversations;
+      final userCtrl = Get.find<UserController>();
+      final updated = await userCtrl.withAuthRetry<List<Conversation>>(
+        (t) => conversationApiService.getConversations(t),
+      );
+      conversations.value = updated;
     } catch (e) {
       debugPrint('Erreur dans refreshConversations: $e');
     }
   }
 
-  void startPolling(String token) {
+  void startPolling(String _ignored) {
     debugPrint('Démarrage polling conversations…');
     if (_pollingTimer != null && _pollingTimer!.isActive) return;
 
@@ -101,7 +99,7 @@ class ConversationController extends GetxController {
 
       try {
         final oldConversations = List<Conversation>.from(conversations);
-        await refreshConversations(token);
+        await refreshConversations('');
 
         for (final conversation in conversations) {
           final oldConversation = oldConversations.firstWhere(
@@ -116,20 +114,13 @@ class ConversationController extends GetxController {
             ),
           );
 
-          // Nouveau message ?
           if (conversation.messages.length > oldConversation.messages.length) {
             final newMessage = conversation.messages.last;
 
-            // Pas mes propres messages
             if (newMessage.sender?.id != currentUserId) {
-              // ✅ NE PAS créer de notif système ici.
-              // Android (service natif) s’occupe des notifs quand l’app n’est pas au 1er plan.
-
-              // Optionnel: petit toast *uniquement* si l’app est AU PREMIER PLAN.
               if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
                 final senderName = newMessage.sender?.name ?? "Message";
                 final content = _previewFor(newMessage);
-                // Un petit banner discret in-app (aucune notification système)
                 Get.snackbar(
                   senderName,
                   content,
@@ -155,14 +146,17 @@ class ConversationController extends GetxController {
   }
 
   Future<Conversation> createConversation({
-    required String token,
+    required String token, // ignoré
     required String userId,
   }) async {
     try {
-      final newConversation = await conversationApiService.createConversation(
-        token: token,
-        isGroup: false,
-        userId: userId,
+      final userCtrl = Get.find<UserController>();
+      final newConversation = await userCtrl.withAuthRetry<Conversation>(
+        (t) => conversationApiService.createConversation(
+          token: t,
+          isGroup: false,
+          userId: userId,
+        ),
       );
       conversations.add(newConversation);
       return newConversation;
@@ -173,13 +167,9 @@ class ConversationController extends GetxController {
     }
   }
 
-  /// Création de groupe conforme à l’API:
-  /// - filtre IDs invalides (ObjectId 24 hex)
-  /// - n’envoie PAS l’ID du créateur (le backend l’ajoute)
-  /// - exige au moins 2 autres membres valides
   Future<bool> createGroupConversation({
     required BuildContext context,
-    required String token,
+    required String token, // ignoré
     required String name,
     String? logo,
     required List<String> memberIds,
@@ -189,7 +179,6 @@ class ConversationController extends GetxController {
       final meId = Get.find<UserController>().currentUser.value?.id ?? '';
       final objectIdRx = RegExp(r'^[0-9a-fA-F]{24}$');
 
-      // Conserver uniquement des ObjectId valides et exclure l'auteur
       final others = <String>{
         ...memberIds.where(
           (id) => id.isNotEmpty && objectIdRx.hasMatch(id) && id != meId,
@@ -201,12 +190,14 @@ class ConversationController extends GetxController {
         return false;
       }
 
-      // Appel service : il transforme memberIds -> members: [{value: id}]
-      final newGroup = await conversationApiService.createGroupConversation(
-        token: token,
-        name: name,
-        logo: logo,
-        memberIds: others.toList(),
+      final userCtrl = Get.find<UserController>();
+      final newGroup = await userCtrl.withAuthRetry<Conversation>(
+        (t) => conversationApiService.createGroupConversation(
+          token: t,
+          name: name,
+          logo: logo,
+          memberIds: others.toList(),
+        ),
       );
 
       conversations.add(newGroup);
@@ -214,9 +205,7 @@ class ConversationController extends GetxController {
       return true;
     } catch (e) {
       debugPrint('Erreur dans createGroupConversation: $e');
-      showErrorSnackbar(
-        "Échec de création du groupe. Vérifie le format des membres et réessaie.",
-      );
+      showErrorSnackbar("Échec de création du groupe. Vérifie le format des membres et réessaie.");
       return false;
     } finally {
       isLoading.value = false;
@@ -224,14 +213,16 @@ class ConversationController extends GetxController {
   }
 
   Future<void> markAsSeen({
-    required String token,
+    required String token, // ignoré
     required String conversationId,
   }) async {
     try {
-      final updatedConversation =
-          await conversationApiService.markConversationAsSeen(
-        token: token,
-        conversationId: conversationId,
+      final userCtrl = Get.find<UserController>();
+      final updatedConversation = await userCtrl.withAuthRetry<Conversation>(
+        (t) => conversationApiService.markConversationAsSeen(
+          token: t,
+          conversationId: conversationId,
+        ),
       );
 
       if (updatedConversation.id.isNotEmpty) {
@@ -246,12 +237,17 @@ class ConversationController extends GetxController {
   }
 
   Future<void> deleteConversation({
-    required String token,
+    required String token, // ignoré
     required String conversationId,
   }) async {
     try {
-      await conversationApiService.deleteConversation(
-          token: token, conversationId: conversationId);
+      final userCtrl = Get.find<UserController>();
+      await userCtrl.withAuthRetry<void>(
+        (t) => conversationApiService.deleteConversation(
+          token: t,
+          conversationId: conversationId,
+        ),
+      );
       conversations.removeWhere((c) => c.id == conversationId);
       showSuccessSnackbar("Succès, conversation supprimée avec succès.");
     } catch (e) {
@@ -260,7 +256,6 @@ class ConversationController extends GetxController {
     }
   }
 
-  /* ---------- helpers ---------- */
   String _previewFor(Message m) {
     if ((m.image ?? '').isNotEmpty) return '📷 Photo';
     if ((m.audio ?? '').isNotEmpty) return '🎤 Message vocal';

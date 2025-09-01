@@ -80,6 +80,15 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
   bool get _isGroup => widget.isGroup == true;
 
+  // -------- helper: fermeture sûre (évite le bug GetX snackbar) --------
+  void _safePop() {
+    if (!mounted) return;
+    try {
+      final nav = Navigator.of(context, rootNavigator: true);
+      if (nav.canPop()) nav.pop();
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
@@ -100,7 +109,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     // toasts groupe pour l’appelant
     if (_isGroup && widget.isCaller) {
       _rtc.onUiParticipantJoined = (uid, name) =>
-          _toast('${name.isNotEmpty ? name : uid} a rejoint l’appel');
+          _toast('${name.isNotEmpty ? name : uid} ${'a rejoint l’appel'.tr}');
       _rtc.onUiParticipantTimeout = (_) {};
     }
 
@@ -127,7 +136,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
         if (!mounted || _start != null || _handledTerminal) return;
         CallSounds.stopRingBack();
         _handledTerminal = true;
-        _showBanner('Ne répond pas', Colors.orange);
+        _showBanner('Ne répond pas'.tr, Colors.orange);
         _finishAfterBeep(() => CallSounds.playEndBeep());
         _log(CallStatus.timeout);
 
@@ -199,7 +208,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
         } catch (_) {}
       }
 
-      _showBanner('Occupé', Colors.red);
+      _showBanner('Occupé'.tr, Colors.red);
       _finishAfterBeep(() => CallSounds.playBusyOnce());
       _log(CallStatus.rejected);
     };
@@ -209,7 +218,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
-      _showBanner('Appel terminé', Colors.white70);
+      _showBanner('Appel terminé'.tr, Colors.white70);
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.ended, endedAt: DateTime.now());
     };
@@ -219,7 +228,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
-      if (mounted) Get.back();
+      if (mounted) _safePop(); // ← au lieu de Get.back()
       _log(CallStatus.cancelled);
     };
 
@@ -228,7 +237,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
-      if (mounted) Get.back();
+      if (mounted) _safePop(); // ← au lieu de Get.back()
     };
 
     sock.onCallTimeout   = () {
@@ -236,7 +245,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
-      _showBanner('Ne répond pas', Colors.orange);
+      _showBanner('Ne répond pas'.tr, Colors.orange);
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.timeout);
     };
@@ -307,7 +316,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   Future<void> _finishAfterBeep(Future<void> Function() sound) async {
     try { await sound(); } catch (_) {}
     await Future.delayed(const Duration(milliseconds: 900));
-    if (mounted) Get.back();
+    if (mounted) _safePop(); // ← au lieu de Get.back()
   }
 
   String _fmt() {
@@ -392,7 +401,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
                       fontSize: 28,
                       fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
-              Text(_start == null ? 'Calling…' : (_isGroup ? 'In group call…' : 'In call…'),
+              Text(_start == null ? 'Calling…'.tr : (_isGroup ? 'In group call…'.tr : 'In call…'.tr),
                   style: const TextStyle(color: Colors.white70, fontSize: 16)),
               const SizedBox(height: 10),
               Text(_fmt(),
@@ -462,7 +471,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
         _endSignaled = true; // évite un second endCall en dispose
       }
     }
-    Get.back();
+    _safePop(); // ← au lieu de Get.back()
   }
 
   Widget _btn(IconData icon,

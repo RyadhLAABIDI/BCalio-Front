@@ -42,7 +42,7 @@ class _QrWebScanScreenState extends State<QrWebScanScreen> {
       final userCtrl = Get.find<UserController>();
       final token = await userCtrl.getToken();
       if (token == null || token.isEmpty) {
-        Get.snackbar('Erreur', 'Vous devez être connecté dans l’app.',
+        Get.snackbar('Erreur'.tr, 'Vous devez être connecté dans l’app.'.tr,
             backgroundColor: Colors.red, colorText: Colors.white);
         return;
       }
@@ -54,22 +54,17 @@ class _QrWebScanScreenState extends State<QrWebScanScreen> {
         'avatar': u?.image,
       };
 
-      // 1) Attacher le token mobile au pairId (Option B)
       await _svc.attach(pairId: pairId, bearerToken: token, preview: preview);
 
-      // 2) Auto-synchroniser les contacts du téléphone vers le serveur
-      //    (afin que le web voie immédiatement "Dans B-Callio" / "Téléphone uniquement")
       try {
         await userCtrl.syncPhoneContactsNow();
-      } catch (_) {
-        // on ignore l'erreur ici, un snackbar est déjà géré dans le controller
-      }
+      } catch (_) {}
 
       setState(() => _done = true);
-      Get.snackbar('Connecté', 'Retourne sur le Web — tu es connecté 👍',
+      Get.snackbar('Connecté'.tr, 'Retourne sur le Web — tu es connecté 👍'.tr,
           backgroundColor: Colors.green, colorText: Colors.white);
     } catch (e) {
-      Get.snackbar('Échec', '$e',
+      Get.snackbar('Échec'.tr, '$e',
           backgroundColor: Colors.red, colorText: Colors.white);
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -80,7 +75,7 @@ class _QrWebScanScreenState extends State<QrWebScanScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Scanner — Connexion Web')),
+      appBar: AppBar(title: Text('Scanner — Connexion Web'.tr)),
       body: Stack(
         children: [
           if (!_done)
@@ -96,13 +91,13 @@ class _QrWebScanScreenState extends State<QrWebScanScreen> {
             Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.check_circle, size: 88, color: Colors.green),
-                  SizedBox(height: 12),
+                children: [
+                  const Icon(Icons.check_circle, size: 88, color: Colors.green),
+                  const SizedBox(height: 12),
                   Text(
-                    'QR scanné.\nVérifie le navigateur Web.',
+                    'QR scanné.\nVérifie le navigateur Web.'.tr,
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16),
+                    style: const TextStyle(fontSize: 16),
                   ),
                 ],
               ),
@@ -120,7 +115,7 @@ class _QrWebScanScreenState extends State<QrWebScanScreen> {
           child: ElevatedButton.icon(
             onPressed: () => Get.back(),
             icon: const Icon(Icons.check),
-            label: Text(_done ? 'Terminer' : 'Annuler'),
+            label: Text(_done ? 'Terminer'.tr : 'Annuler'.tr),
             style: ElevatedButton.styleFrom(
               backgroundColor: _done ? Colors.green : theme.colorScheme.primary,
               foregroundColor: Colors.white,

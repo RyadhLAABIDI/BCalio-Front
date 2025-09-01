@@ -345,7 +345,7 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
                     child: ElevatedButton.icon(
                       onPressed: () => Get.toNamed('/qr/scan'),
                       icon: const Icon(Icons.qr_code_scanner),
-                      label: const Text('Scanner QR'),
+                      label:  Text("scan_qr".tr),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
@@ -356,7 +356,7 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
                     child: OutlinedButton.icon(
                       onPressed: () => Get.toNamed('/qr/my'),
                       icon: const Icon(Icons.qr_code_2),
-                      label: const Text('Mon QR'),
+                      label:  Text("my_qr".tr),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),

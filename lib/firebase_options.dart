@@ -40,6 +40,7 @@ class DefaultFirebaseOptions {
     }
   }
 
+  // (inchangé) — web de l’ancien projet. Tu peux l’ignorer si tu ne cibles pas le web.
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyB7jTRMtlf3BB1JABeubsZnece1oaE7yu0',
     appId: '1:173326883920:web:777049f57ee60edff74555',
@@ -50,14 +51,16 @@ class DefaultFirebaseOptions {
     measurementId: 'G-1S4J11RG5Q',
   );
 
+  // ✅ MIS À JOUR pour le nouveau projet Android (bcalionew)
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAXzXQxqAW2Vbd3llGWU0Wq59OGF3X3298',
-    appId: '1:173326883920:android:22571e3c8dbf9e3cf74555',
-    messagingSenderId: '173326883920',
-    projectId: 'b-callio',
-    storageBucket: 'b-callio.firebasestorage.app',
+    apiKey: 'AIzaSyAfEjNAPvcBknt9secRYzewxmsbbI-tm7k',
+    appId: '1:953761270388:android:3f44cf85605f5ec5e41f21',
+    messagingSenderId: '953761270388',
+    projectId: 'bcalionew',
+    storageBucket: 'bcalionew.firebasestorage.app',
   );
 
+  // (inchangé) — iOS ancien projet. Sans incidence si tu ne cibles pas iOS.
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyBH5iHolWbfsgl9l4MjDMtxSOdrlK4IoRU',
     appId: '1:173326883920:ios:e25913be9c4cd1cbf74555',
@@ -67,6 +70,7 @@ class DefaultFirebaseOptions {
     iosBundleId: 'com.elite.bcalio',
   );
 
+  // (inchangé) — macOS ancien projet.
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyBH5iHolWbfsgl9l4MjDMtxSOdrlK4IoRU',
     appId: '1:173326883920:ios:160cfa42442dd0cef74555',
@@ -76,6 +80,7 @@ class DefaultFirebaseOptions {
     iosBundleId: 'com.example.bacalio',
   );
 
+  // (inchangé) — Windows ancien projet.
   static const FirebaseOptions windows = FirebaseOptions(
     apiKey: 'AIzaSyB7jTRMtlf3BB1JABeubsZnece1oaE7yu0',
     appId: '1:173326883920:web:9284a065a7720d4ff74555',

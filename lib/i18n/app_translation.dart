@@ -4,6 +4,7 @@ class AppTranslation extends Translations {
   @override
   Map<String, Map<String, String>> get keys => {
         'fr_FR': {
+          'retry': 'Réessayer',
           'add': 'Ajouter',
           'chat_bot_clear': 'Effacer la conversation',
           'chat_bot_close': 'Fermer',
@@ -261,8 +262,126 @@ class AppTranslation extends Translations {
   
   "conversation_cleared": "Conversation effacée!",
   "conversation_empty": "Commencez une nouvelle conversation",
+  // Appels / toasts / statuts
+      'a rejoint l’appel': 'a rejoint l’appel',
+      'Ne répond pas': 'Ne répond pas',
+      'Occupé': 'Occupé',
+      'Appel terminé': 'Appel terminé',
+      'Waiting for participants…': 'En attente des participants…',
+      'Me': 'Moi',
+      'Calling…': 'Appel en cours…',
+      'In group call…': 'En appel de groupe…',
+      'In call…': 'En appel…',
+      'Group video call': 'Appel vidéo de groupe',
+      'Group audio call': 'Appel audio de groupe',
+      'Video call': 'Appel vidéo',
+      'Audio call': 'Appel audio',
+
+      // Chatbot modal
+      'BCalio-AI': 'BCalio-AI',
+      'Hi! I\'m your AI assistant': 'Salut ! Je suis votre assistant IA',
+      'Ask me anything, and I\'ll help you find answers':
+          'Posez-moi vos questions, je vous aiderai à trouver des réponses',
+      
+
+      // Dialog nettoyage conversation
+      
+       // CallLogScreen
+      'Journal d’appel': 'Journal d’appel',
+      'Effacer l’historique': 'Effacer l’historique',
+      'Effacer l’historique ?': 'Effacer l’historique ?',
+      'Cette action est irréversible.': 'Cette action est irréversible.',
+      'Annuler': 'Annuler',
+      'Effacer': 'Effacer',
+      'Tous': 'Tous',
+      'Manqués': 'Manqués',
+      'Entrants': 'Entrants',
+      'Sortants': 'Sortants',
+      'Supprimer': 'Supprimer',
+      'Aucun appel pour le moment.': 'Aucun appel pour le moment.',
+      'Les appels récents apparaîtront ici.': 'Les appels récents apparaîtront ici.',
+
+      // ChatRoomAppBar / presence
+      'Vu à l’instant': 'Vu à l’instant',
+      'Vu il y a': 'Vu il y a',
+      'min': 'min',
+      'h': 'h',
+      'Vu le': 'Vu le',
+      'Hors ligne': 'Hors ligne',
+      'En ligne': 'En ligne',
+      'en ligne': 'en ligne',
+
+      // NavigationScreen labels
+      
+      'Contact': 'Contacts',
+      
+
+      // SettingsScreen
+      'Statut: En ligne': 'Statut: En ligne',
+      'Statut: Hors ligne': 'Statut: Hors ligne',
+      'Vos contacts vous voient “en ligne”.': 'Vos contacts vous voient “en ligne”.',
+      'Vous apparaissez hors ligne (mode invisible).': 'Vous apparaissez hors ligne (mode invisible).',
+      'Visible': 'Visible',
+      'Invisible': 'Invisible',
+      'Mon QR': 'Mon QR',
+      'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.':
+          'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.',
+      'Ouvrir': 'Ouvrir',
+      'Connexion Web': 'Connexion Web',
+      'Scanner le QR affiché sur le site pour ouvrir ta session.':
+          'Scanner le QR affiché sur le site pour ouvrir ta session.',
+      'Scanner': 'Scanner',
+       
+'Sans expiration': 'Sans expiration',
+'Expiré • Régénérer': 'Expiré • Régénérer',
+'Expire dans': 'Expire dans',
+'j': 'j',
+
+'m': 'm',
+'Régénérer': 'Régénérer',
+'Aucun QR': 'Aucun QR',
+
+'Scanner — Connexion Web': 'Scanner — Connexion Web',
+'Vous devez être connecté dans l’app.': 'Vous devez être connecté dans l’app.',
+'Connecté': 'Connecté',
+'Retourne sur le Web — tu es connecté 👍': 'Retourne sur le Web — tu es connecté 👍',
+'Échec': 'Échec',
+'QR scanné.\nVérifie le navigateur Web.': 'QR scanné.\nVérifie le navigateur Web.',
+'Terminer': 'Terminer',
+
+
+'Ajouter via QR': 'Ajouter via QR',
+'Échec QR': 'Échec QR',
+'inconnu': 'inconnu',
+'QR invalide': 'QR invalide',
+'contactId manquant': 'contactId manquant',
+'Utilisateur trouvé, mais son numéro n\'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.':
+  'Utilisateur trouvé, mais son numéro n\'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.',
+'Contact ajouté': 'Contact ajouté',
+
+'Succès, invitation envoyée à': 'Succès, invitation envoyée à',
+'Erreur, échec de l\'envoi de l\'invitation à': 'Erreur, échec de l\'envoi de l\'invitation à',
+'Échec de la sélection de l\'image': 'Échec de la sélection de l\'image',
+'Échec de l\'envoi de l\'invitation': 'Échec de l\'envoi de l\'invitation',
+'Nom du groupe': 'Nom du groupe',
+'Veuillez entrer un nom de groupe': 'Veuillez entrer un nom de groupe',
+'Créer': 'Créer',
+'N/A': 'N/A',
+
+'Contacts enregistrés': 'Contacts enregistrés',
+'Contacts non enregistrés': 'Contacts non enregistrés',
+
+'try_different_keywords': 'Essayez avec d’autres mots-clés',
+  'swipe_to_decline': 'Glisser pour refuser',
+  'swipe_to_answer': 'Glisser pour répondre',
+  'scan_qr': 'Scanner QR',
+  'my_qr': 'Mon QR',
+  'connection_issue': 'Problème de connexion',
+  'check_connection': 'Vérifiez votre connexion internet ou réessayez plus tard.',
+
         },
         'ar_AR': {
+          'retry': 'إعادة المحاولة',
           'add': 'إضافة',
           "clear_conversation": "مسح المحادثة",
   "clear_conversation_confirmation": "هل أنت متأكد أنك تريد حذف المحادثة بالكامل؟",
@@ -511,8 +630,124 @@ class AppTranslation extends Translations {
           "Are you sure you want to delete this message?":
               "هل أنت متأكد أنك تريد حذف هذه الرسالة؟",
           'user_entered': '[النظام] :name انضم إلى المحادثة!',
+          // Calls / toasts / statuses
+      'a rejoint l’appel': 'انضم إلى المكالمة',
+      'Ne répond pas': 'لا يجيب',
+      'Occupé': 'مشغول',
+      'Appel terminé': 'انتهت المكالمة',
+      'Waiting for participants…': 'في انتظار المشاركين…',
+      'Me': 'أنا',
+      'Calling…': 'جاري الاتصال…',
+      'In group call…': 'في مكالمة جماعية…',
+      'In call…': 'في مكالمة…',
+      'Group video call': 'مكالمة فيديو جماعية',
+      'Group audio call': 'مكالمة صوتية جماعية',
+      'Video call': 'مكالمة فيديو',
+      'Audio call': 'مكالمة صوتية',
+
+      // Chatbot modal
+      'BCalio-AI': 'BCalio-AI',
+      'Hi! I\'m your AI assistant': 'مرحبًا! أنا مساعدك الذكي',
+      'Ask me anything, and I\'ll help you find answers':
+          'اسألني أي شيء وسأساعدك في إيجاد الإجابات',
+     
+      // Clear dialog
+      
+      
+       // CallLogScreen
+      'Journal d’appel': 'سجل المكالمات',
+      'Effacer l’historique': 'مسح السجل',
+      'Effacer l’historique ?': 'هل تريد مسح السجل؟',
+      'Cette action est irréversible.': 'هذا الإجراء لا يمكن التراجع عنه.',
+      'Annuler': 'إلغاء',
+      'Effacer': 'مسح',
+      'Tous': 'الكل',
+      'Manqués': 'فائتة',
+      'Entrants': 'واردة',
+      'Sortants': 'صادرة',
+      'Supprimer': 'حذف',
+      'Aucun appel pour le moment.': 'لا توجد مكالمات حتى الآن.',
+      'Les appels récents apparaîtront ici.': 'ستظهر المكالمات الحديثة هنا.',
+
+      // ChatRoomAppBar / presence
+      'Vu à l’instant': 'شوهد للتو',
+      'Vu il y a': 'شوهد منذ',
+      'min': 'د',
+      'h': 'س',
+      'Vu le': 'شوهد في',
+      'Hors ligne': 'غير متصل',
+      'En ligne': 'متصل',
+      'en ligne': 'متصل',
+
+      // NavigationScreen labels
+      
+      // SettingsScreen
+      'Statut: En ligne': 'الحالة: متصل',
+      'Statut: Hors ligne': 'الحالة: غير متصل',
+      'Vos contacts vous voient “en ligne”.': 'يمكن لجهات اتصالك رؤيتك “متصلاً”.',
+      'Vous apparaissez hors ligne (mode invisible).': 'تظهر كغير متصل (وضع التخفي).',
+      'Visible': 'مرئي',
+      'Invisible': 'مخفي',
+      'Mon QR': 'رمزي QR',
+      'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.':
+          'اعرض رمز QR الخاص بك (صالح ~30 يومًا) ليتم إضافتك بسرعة.',
+      'Ouvrir': 'فتح',
+      'Connexion Web': 'الاتصال عبر الويب',
+      'Scanner le QR affiché sur le site pour ouvrir ta session.':
+          'امسح رمز QR الظاهر على الموقع لفتح جلستك.',
+      'Scanner': 'مسح',
+       
+'Sans expiration': 'بدون انتهاء',
+'Expiré • Régénérer': 'انتهى • إعادة توليد',
+'Expire dans': 'ينتهي خلال',
+'j': 'ي',
+
+'m': 'د',
+'Régénérer': 'إعادة توليد',
+'Aucun QR': 'لا يوجد رمز QR',
+
+'Scanner — Connexion Web': 'مسح — اتصال الويب',
+'Vous devez être connecté dans l’app.': 'يجب أن تكون مسجلاً دخولك في التطبيق.',
+'Connecté': 'تم الاتصال',
+'Retourne sur le Web — tu es connecté 👍': 'ارجع إلى الويب — تم الاتصال 👍',
+'Échec': 'فشل',
+'QR scanné.\nVérifie le navigateur Web.': 'تم مسح رمز QR.\nتحقق من المتصفح.',
+'Terminer': 'إنهاء',
+
+
+'Ajouter via QR': 'إضافة عبر QR',
+'Échec QR': 'فشل QR',
+'inconnu': 'غير معروف',
+'QR invalide': 'رمز QR غير صالح',
+'contactId manquant': 'معرّف جهة الاتصال مفقود',
+'Utilisateur trouvé, mais son numéro n\'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.':
+  'تم العثور على المستخدم لكن لم يتم جلب الرقم.\nأضفه يدويًا أو أكمل الرقم.',
+'Contact ajouté': 'تمت إضافة جهة الاتصال',
+
+'Succès, invitation envoyée à': 'تمت دعوة',
+'Erreur, échec de l\'envoi de l\'invitation à': 'خطأ، فشل إرسال الدعوة إلى',
+'Échec de la sélection de l\'image': 'فشل اختيار الصورة',
+'Échec de l\'envoi de l\'invitation': 'فشل إرسال الدعوة',
+'Nom du groupe': 'اسم المجموعة',
+'Veuillez entrer un nom de groupe': 'يرجى إدخال اسم المجموعة',
+'Créer': 'إنشاء',
+'N/A': 'غير متاح',
+
+'Contacts non enregistrés': 'جهات اتصال غير محفوظة',
+
+'try_different_keywords': 'جرّب كلمات مفتاحية مختلفة',
+  'swipe_to_decline': 'اسحب للرفض',
+  'swipe_to_answer': 'اسحب للرد',
+'scan_qr': 'مسح QR',
+  'my_qr': 'رمزي QR',
+  'connection_issue': 'مشكلة في الاتصال',
+  'check_connection': 'تحقق من اتصالك بالإنترنت أو أعد المحاولة لاحقًا.',
+
         },
         'en_US': {
+          'check_connection': 'Check your internet connection or try again later.',
+          'retry': 'Retry',
+          'connection_issue': 'Connection issue',
           'add': 'ADD',
            "clear_conversation": "Clear conversation",
   "clear_conversation_confirmation": "Are you sure you want to delete the entire conversation?",
@@ -760,6 +995,119 @@ class AppTranslation extends Translations {
           "Are you sure you want to delete this message?":
               "Are you sure you want to delete this message?",
           'user_entered': '[system] :name has entered the chat!',
+
+          // Calls / toasts / statuses
+      'a rejoint l’appel': 'joined the call',
+      'Ne répond pas': 'No answer',
+      'Occupé': 'Busy',
+      'Appel terminé': 'Call ended',
+      'Waiting for participants…': 'Waiting for participants…',
+      'Me': 'Me',
+      'Calling…': 'Calling…',
+      'In group call…': 'In group call…',
+      'In call…': 'In call…',
+      'Group video call': 'Group video call',
+      'Group audio call': 'Group audio call',
+      'Video call': 'Video call',
+      'Audio call': 'Audio call',
+
+      // Chatbot modal
+      'BCalio-AI': 'BCalio-AI',
+      'Hi! I\'m your AI assistant': 'Hi! I\'m your AI assistant',
+      'Ask me anything, and I\'ll help you find answers':
+          'Ask me anything, and I\'ll help you find answers',
+      
+      // Clear dialog
+      
+      
+       // CallLogScreen
+      'Journal d’appel': 'Call log',
+      'Effacer l’historique': 'Clear history',
+      'Effacer l’historique ?': 'Clear history?',
+      'Cette action est irréversible.': 'This action is irreversible.',
+      'Annuler': 'Cancel',
+      'Effacer': 'Clear',
+      'Tous': 'All',
+      'Manqués': 'Missed',
+      'Entrants': 'Incoming',
+      'Sortants': 'Outgoing',
+      'Supprimer': 'Delete',
+      'Aucun appel pour le moment.': 'No calls yet.',
+      'Les appels récents apparaîtront ici.': 'Recent calls will appear here.',
+
+      // ChatRoomAppBar / presence
+      'Vu à l’instant': 'Seen just now',
+      'Vu il y a': 'Seen',
+      'min': 'min',
+      'h': 'h',
+      'Vu le': 'Seen on',
+      'Hors ligne': 'Offline',
+      'En ligne': 'Online',
+      'en ligne': 'online',
+
+      // NavigationScreen labels
+      
+
+      // SettingsScreen
+      'Statut: En ligne': 'Status: Online',
+      'Statut: Hors ligne': 'Status: Offline',
+      'Vos contacts vous voient “en ligne”.': 'Your contacts can see you “online”.',
+      'Vous apparaissez hors ligne (mode invisible).': 'You appear offline (invisible mode).',
+      'Visible': 'Visible',
+      'Invisible': 'Invisible',
+      'Mon QR': 'My QR',
+      'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.':
+          'Show your QR code (valid ~30 days) to be added quickly.',
+      'Ouvrir': 'Open',
+      'Connexion Web': 'Web login',
+      'Scanner le QR affiché sur le site pour ouvrir ta session.':
+          'Scan the QR shown on the website to open your session.',
+      'Scanner': 'Scan',
+      
+'Sans expiration': 'No expiration',
+'Expiré • Régénérer': 'Expired • Regenerate',
+'Expire dans': 'Expires in',
+'j': 'd',
+
+'m': 'm',
+'Régénérer': 'Regenerate',
+'Aucun QR': 'No QR',
+
+'Scanner — Connexion Web': 'Scan — Web login',
+'Vous devez être connecté dans l’app.': 'You must be logged in to the app.',
+'Connecté': 'Connected',
+'Retourne sur le Web — tu es connecté 👍': 'Go back to the web — you are connected 👍',
+'Échec': 'Failed',
+'QR scanné.\nVérifie le navigateur Web.': 'QR scanned.\nCheck your web browser.',
+'Terminer': 'Finish',
+
+
+'Ajouter via QR': 'Add via QR',
+'Échec QR': 'QR failure',
+'inconnu': 'unknown',
+'QR invalide': 'Invalid QR',
+'contactId manquant': 'missing contactId',
+'Utilisateur trouvé, mais son numéro n\'a pas été récupéré.\nAjoute-le manuellement ou complète le numéro.':
+  'User found, but phone number was not retrieved.\nAdd manually or complete the number.',
+'Contact ajouté': 'Contact added',
+
+'Succès, invitation envoyée à': 'Success, invitation sent to',
+'Erreur, échec de l\'envoi de l\'invitation à': 'Error, failed to send invitation to',
+'Échec de la sélection de l\'image': 'Failed to pick image',
+'Échec de l\'envoi de l\'invitation': 'Failed to send invitation',
+'Nom du groupe': 'Group name',
+'Veuillez entrer un nom de groupe': 'Please enter a group name',
+'Créer': 'Create',
+'N/A': 'N/A',
+
+'Contacts enregistrés': 'Saved contacts',
+'Contacts non enregistrés': 'Unsaved contacts',
+'try_different_keywords': 'Try different keywords',
+  'swipe_to_decline': 'Swipe to decline',
+  'swipe_to_answer': 'Swipe to answer',
+'scan_qr': 'Scan QR',
+  'my_qr': 'My QR',
+
         },
       };
 }

@@ -1,4 +1,4 @@
-package com.elite.bcalio;
+package com.elite.bcalio.app;
 
 import android.app.AlarmManager;
 import android.app.Notification;
@@ -43,10 +43,10 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     private static boolean msgChannelEnsured  = false;
 
     /* ======== INTENTS APPELS ======== */
-    public static final String ACTION_ACCEPT          = "com.elite.bcalio.ACTION_ACCEPT_CALL";
-    public static final String ACTION_REJECT          = "com.elite.bcalio.ACTION_REJECT_CALL";
-    public static final String ACTION_TIMEOUT         = "com.elite.bcalio.ACTION_TIMEOUT_CALL";
-    public static final String ACTION_INCOMING_DELETE = "com.elite.bcalio.ACTION_INCOMING_DELETE";
+    public static final String ACTION_ACCEPT          = "com.elite.bcalio.app.ACTION_ACCEPT_CALL";
+    public static final String ACTION_REJECT          = "com.elite.bcalio.app.ACTION_REJECT_CALL";
+    public static final String ACTION_TIMEOUT         = "com.elite.bcalio.app.ACTION_TIMEOUT_CALL";
+    public static final String ACTION_INCOMING_DELETE = "com.elite.bcalio.app.ACTION_INCOMING_DELETE";
 
     private static final long MISSED_CALL_AFTER_MS = 30_000L;
 

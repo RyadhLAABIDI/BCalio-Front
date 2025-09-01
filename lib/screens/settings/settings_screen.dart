@@ -38,12 +38,12 @@ class SettingsScreen extends StatelessWidget {
             final visible = userCtrl.isOnlineVisible.value;
             return _StatusCard(
               isDark: isDarkMode,
-              title: visible ? 'Statut: En ligne' : 'Statut: Hors ligne',
+              title: visible ? 'Statut: En ligne'.tr : 'Statut: Hors ligne'.tr,
               subtitle: visible
-                  ? 'Vos contacts vous voient “en ligne”.'
-                  : 'Vous apparaissez hors ligne (mode invisible).',
+                  ? 'Vos contacts vous voient “en ligne”.'.tr
+                  : 'Vous apparaissez hors ligne (mode invisible).'.tr,
               icon: visible ? Iconsax.record_circle : Iconsax.eye_slash,
-              chipText: visible ? 'Visible' : 'Invisible',
+              chipText: visible ? 'Visible'.tr : 'Invisible'.tr,
               chipIcon: visible ? Iconsax.flash_1 : Iconsax.shield_cross,
               value: visible,
               onChanged: (v) => userCtrl.setOnlineVisible(v),
@@ -83,7 +83,7 @@ BoxDecoration _glassDecoration({required bool isDark}) {
   return BoxDecoration(
     // ⬇️ applique les couleurs de thème demandées
     color: isDark
-        ? kDarkPrimaryColor   // dark mode
+        ? kDarkPrimaryColor.withOpacity(0.70)  // dark mode
         : kLightPrimaryColor, // light mode
     borderRadius: BorderRadius.circular(16),
     border: Border.all(
@@ -276,14 +276,14 @@ class _QrCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Mon QR',
+                    Text('Mon QR'.tr,
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           color: titleColor,
                           fontWeight: FontWeight.w700,
                         )),
                     const SizedBox(height: 4),
                     Text(
-                      'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.',
+                      'Affiche ton code QR (valide ~30 jours) pour être ajouté rapidement.'.tr,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -297,7 +297,7 @@ class _QrCard extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: () => Get.toNamed('/qr/my'),
                 icon: Icon(Iconsax.export_1, size: 18, color: isDark ? Colors.black : Colors.black),
-                label: const Text('Ouvrir'),
+                label: Text('Ouvrir'.tr),
                 style: ElevatedButton.styleFrom(
                   foregroundColor: Colors.black,
                   backgroundColor: Colors.white,
@@ -344,14 +344,14 @@ class _QrPairCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Connexion Web',
+                    Text('Connexion Web'.tr,
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           color: titleColor,
                           fontWeight: FontWeight.w700,
                         )),
                     const SizedBox(height: 4),
                     Text(
-                      'Scanner le QR affiché sur le site pour ouvrir ta session.',
+                      'Scanner le QR affiché sur le site pour ouvrir ta session.'.tr,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -365,7 +365,7 @@ class _QrPairCard extends StatelessWidget {
               ElevatedButton.icon(
                 onPressed: () => Get.toNamed('/qr/web-scan'),
                 icon: Icon(Iconsax.scan_barcode, size: 18, color: isDark ? Colors.black : Colors.black),
-                label: const Text('Scanner'),
+                label: Text('Scanner'.tr),
                 style: ElevatedButton.styleFrom(
                   foregroundColor: Colors.black,
                   backgroundColor: Colors.white,

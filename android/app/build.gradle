@@ -12,7 +12,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.elite.bcalio"
+    namespace = "com.elite.bcalio.app"
     compileSdk = 35
     ndkVersion = "25.1.8937393"
 
@@ -27,11 +27,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.elite.bcalio"
+        applicationId = "com.elite.bcalio.app"
         minSdk = 23
         targetSdk = 34
-        versionCode = 6
-        versionName = 2
+        versionCode = 3
+        versionName = 1
     }
 
     signingConfigs {

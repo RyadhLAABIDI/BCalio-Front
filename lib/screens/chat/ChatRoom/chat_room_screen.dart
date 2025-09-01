@@ -85,6 +85,9 @@ class _ChatRoomPageState extends State<ChatRoomPage> with TickerProviderStateMix
   // Typing attach (évite d’attacher 10x)
   bool _typingAttached = false;
 
+  // ⬅️ état de chargement du **premier fetch**
+  final RxBool _initialLoading = true.obs;
+
   Future<String?> getPusherToken(String channelName, String socketId) async {
     try {
       final token = await Get.find<UserController>().getToken();
@@ -232,16 +235,23 @@ class _ChatRoomPageState extends State<ChatRoomPage> with TickerProviderStateMix
       final token = await userController.getToken();
       if (token != null && token.isNotEmpty) {
         print('Fetching messages for conversationId=${widget.conversationId}');
-        await controller.fetchMessages(token, widget.conversationId);
+        try {
+          _initialLoading.value = true; // start loader
+          await controller.fetchMessages(token, widget.conversationId);
 
-        // marquer la conversation comme "vue"
-        final convCtrl = Get.find<ConversationController>();
-        await convCtrl.markAsSeen(
-          token: token,
-          conversationId: widget.conversationId,
-        );
+          // marquer la conversation comme "vue"
+          final convCtrl = Get.find<ConversationController>();
+          await convCtrl.markAsSeen(
+            token: token,
+            conversationId: widget.conversationId,
+          );
 
-        controller.startPolling(token, widget.conversationId);
+          controller.startPolling(token, widget.conversationId);
+        } catch (e) {
+          debugPrint('Initial fetch error: $e');
+        } finally {
+          _initialLoading.value = false; // stop loader
+        }
       } else {
         print('Failed to retrieve token. Please log in again.');
         Get.snackbar('Error', 'Failed to retrieve token. Please log in again.', backgroundColor: Colors.red, colorText: Colors.white);
@@ -349,251 +359,262 @@ class _ChatRoomPageState extends State<ChatRoomPage> with TickerProviderStateMix
             ),
 
             // === Contenu qui se décale au-dessus du clavier ===
-            Obx(() {
-              final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-              return AnimatedPadding(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                padding: EdgeInsets.only(bottom: bottomInset),
-                child: Stack(
-                  children: [
-                    Column(
-                      children: [
-                        Expanded(
-                          child: controller.messages.isEmpty
-                              ? Center(
-                                  child: Text(
-                                    "no_messages_yet".tr,
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w400,
-                                      color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-                                    ),
-                                  ),
-                                )
-                              : MessageList(
-                                  bubbleColorOutgoing: isDarkMode ? bubbleOutgoingDark : bubbleOutgoingLight,
-                                  bubbleColorIncoming: isDarkMode ? bubbleIncomingDark : bubbleIncomingLight,
-                                  textColorOutgoing: isDarkMode ? Colors.white : Colors.black,
-                                  textColorIncoming: isDarkMode ? Colors.white : Colors.black,
-                                  timeTextStyle: TextStyle(
-                                    fontSize: 10,
-                                    color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
-                                  ),
-                                  onDelete: (messageId) async {
-                                    final token = await Get.find<UserController>().getToken();
-                                    if (token != null && token.isNotEmpty) {
-                                      await controller.deleteMessage(widget.conversationId, messageId, token);
-                                      handleDelete(messageId);
-                                    } else {
-                                      Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
-                                      Get.toNamed(Routes.login);
-                                    }
-                                  },
-                                  messages: controller.messages,
-                                  scrollController: _scrollController,
-                                  recipientId: recipientID, // ✓/✓✓/✓✓ bleus
-                                ),
-                        ),
+            AnimatedPadding(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+              child: Stack(
+                children: [
+                  Column(
+                    children: [
+                      Expanded(
+                        child: Obx(() {
+                          // tant que le 1er fetch n’est pas terminé → loader “moderne”
+                          if (_initialLoading.value) {
+                            return _ModernSpinner(
+                              primary: theme.colorScheme.primary,
+                              secondary: theme.colorScheme.secondary,
+                              background: (isDarkMode ? Colors.white10 : Colors.black12),
+                            );
+                          }
 
-                        // ⌨️ Bandeau "… est en train d'écrire"
-                        Obx(() {
-                          if (!controller.otherTyping.value) return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.start,
-                              children: [
-                                const SizedBox(width: 8),
-                                const SizedBox(
-                                  width: 8, height: 8,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                          // Après chargement: soit pas de messages, soit la liste
+                          if (controller.messages.isEmpty) {
+                            return Center(
+                              child: Text(
+                                "no_messages_yet".tr,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w400,
+                                  color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
                                 ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  "${widget.name} ${"is_typing".tr.isEmpty ? "is typing..." : "Entrain d'écrire ...".tr}",
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: isDarkMode ? Colors.white70 : Colors.black54,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                              ],
+                              ),
+                            );
+                          }
+
+                          return MessageList(
+                            bubbleColorOutgoing: isDarkMode ? bubbleOutgoingDark : bubbleOutgoingLight,
+                            bubbleColorIncoming: isDarkMode ? bubbleIncomingDark : bubbleIncomingLight,
+                            textColorOutgoing: isDarkMode ? Colors.white : Colors.black,
+                            textColorIncoming: isDarkMode ? Colors.white : Colors.black,
+                            timeTextStyle: TextStyle(
+                              fontSize: 10,
+                              color: isDarkMode ? Colors.grey[400] : Colors.grey[600],
                             ),
+                            onDelete: (messageId) async {
+                              final token = await Get.find<UserController>().getToken();
+                              if (token != null && token.isNotEmpty) {
+                                await controller.deleteMessage(widget.conversationId, messageId, token);
+                                handleDelete(messageId);
+                              } else {
+                                Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
+                                Get.toNamed(Routes.login);
+                              }
+                            },
+                            messages: controller.messages,
+                            scrollController: _scrollController,
+                            recipientId: recipientID, // ✓/✓✓/✓✓ bleus
                           );
                         }),
+                      ),
 
-                        ChatInputArea(
-                          backgroundColor: isDarkMode ? kDarkBgColor.withOpacity(0.95) : Colors.white,
-                          iconColor: isDarkMode ? (Colors.grey[400] ?? Colors.grey) : (Colors.grey[600] ?? Colors.grey),
-                          inputBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(25),
-                            borderSide: BorderSide.none,
+                      // ⌨️ Bandeau "… est en train d'écrire"
+                      Obx(() {
+                        if (!controller.otherTyping.value) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            children: [
+                              const SizedBox(width: 8),
+                              const SizedBox(
+                                width: 8, height: 8,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                "${widget.name} ${"is_typing".tr.isEmpty ? "is typing..." : "Entrain d'écrire ...".tr}",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isDarkMode ? Colors.white70 : Colors.black54,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
                           ),
-                          inputFillColor: isDarkMode ? Colors.grey[800]!.withOpacity(0.8) : Colors.grey[200]!.withOpacity(0.8),
-                          inputTextStyle: TextStyle(
-                            fontSize: 16,
-                            color: isDarkMode ? Colors.white : Colors.black,
-                          ),
-                          isRecording: controller.isRecording,
-                          isSending: isSending,
+                        );
+                      }),
 
-                          // ⌨️ Typing: onChanged -> controller
-                          onChanged: (txt) => controller.handleTyping(text: txt),
+                      ChatInputArea(
+                        backgroundColor: isDarkMode ? kDarkBgColor.withOpacity(0.95) : Colors.white,
+                        iconColor: isDarkMode ? (Colors.grey[400] ?? Colors.grey) : (Colors.grey[600] ?? Colors.grey),
+                        inputBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(25),
+                          borderSide: BorderSide.none,
+                        ),
+                        inputFillColor: isDarkMode ? Colors.grey[800]!.withOpacity(0.8) : Colors.grey[200]!.withOpacity(0.8),
+                        inputTextStyle: TextStyle(
+                          fontSize: 16,
+                          color: isDarkMode ? Colors.white : Colors.black,
+                        ),
+                        isRecording: controller.isRecording,
+                        isSending: isSending,
 
-                          onSend: (message) async {
-                            if (message.trim().isEmpty) return;
-                            HapticFeedback.selectionClick();
+                        // ⌨️ Typing: onChanged -> controller
+                        onChanged: (txt) => controller.handleTyping(text: txt),
 
-                            _forceScrollNextUpdate = true;
+                        onSend: (message) async {
+                          if (message.trim().isEmpty) return;
+                          HapticFeedback.selectionClick();
 
-                            isSending.value = true;
-                            final token = await Get.find<UserController>().getToken();
-                            if (token != null && token.isNotEmpty) {
-                              if (message.startsWith('@aibot')) {
-                                final userQuery = message.replaceFirst('@aibot', '').trim();
-                                if (userQuery.isNotEmpty) {
-                                  await controller.sendAIChatbotMessage(
-                                    token: token,
-                                    conversationId: widget.conversationId,
-                                    userMessage: userQuery,
-                                  );
-                                }
-                              } else {
-                                await controller.sendMessage(
+                          _forceScrollNextUpdate = true;
+
+                          isSending.value = true;
+                          final token = await Get.find<UserController>().getToken();
+                          if (token != null && token.isNotEmpty) {
+                            if (message.startsWith('@aibot')) {
+                              final userQuery = message.replaceFirst('@aibot', '').trim();
+                              if (userQuery.isNotEmpty) {
+                                await controller.sendAIChatbotMessage(
                                   token: token,
                                   conversationId: widget.conversationId,
-                                  body: message,
+                                  userMessage: userQuery,
                                 );
                               }
                             } else {
-                              Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
-                              Get.toNamed(Routes.login);
-                            }
-                            isSending.value = false;
-                          },
-                          onAttachImage: (imageFile) async {
-                            _forceScrollNextUpdate = true;
-
-                            isSending.value = true;
-                            final token = await Get.find<UserController>().getToken();
-                            if (token != null && token.isNotEmpty) {
-                              await controller.sendImage(
+                              await controller.sendMessage(
                                 token: token,
                                 conversationId: widget.conversationId,
-                                imageFile: imageFile,
+                                body: message,
                               );
-                            } else {
-                              Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
-                              Get.toNamed(Routes.login);
                             }
-                            isSending.value = false;
-                          },
-                          onAttachVideo: (videoFile) async {
-                            _forceScrollNextUpdate = true;
+                          } else {
+                            Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
+                            Get.toNamed(Routes.login);
+                          }
+                          isSending.value = false;
+                        },
+                        onAttachImage: (imageFile) async {
+                          _forceScrollNextUpdate = true;
 
-                            isSending.value = true;
-                            final token = await Get.find<UserController>().getToken();
-                            if (token != null && token.isNotEmpty) {
-                              await controller.sendVideo(
-                                token: token,
-                                conversationId: widget.conversationId,
-                                videoFile: videoFile,
-                              );
-                            } else {
-                              Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
-                              Get.toNamed(Routes.login);
-                            }
-                            isSending.value = false;
-                          },
-                          onStartRecording: () => controller.startRecording(),
-                          onStopRecording: () async {
-                            _forceScrollNextUpdate = true;
+                          isSending.value = true;
+                          final token = await Get.find<UserController>().getToken();
+                          if (token != null && token.isNotEmpty) {
+                            await controller.sendImage(
+                              token: token,
+                              conversationId: widget.conversationId,
+                              imageFile: imageFile,
+                            );
+                          } else {
+                            Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
+                            Get.toNamed(Routes.login);
+                          }
+                          isSending.value = false;
+                        },
+                        onAttachVideo: (videoFile) async {
+                          _forceScrollNextUpdate = true;
 
-                            isSending.value = true;
-                            final token = await Get.find<UserController>().getToken();
-                            if (token != null && token.isNotEmpty) {
-                              await controller.stopRecording(
-                                token: token,
-                                conversationId: widget.conversationId,
-                              );
-                            } else {
-                              Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
-                              Get.toNamed(Routes.login);
-                            }
-                            isSending.value = false;
-                          },
-                          onDiscardRecording: () => controller.discardRecording(),
-                        ),
-                      ],
-                    ),
+                          isSending.value = true;
+                          final token = await Get.find<UserController>().getToken();
+                          if (token != null && token.isNotEmpty) {
+                            await controller.sendVideo(
+                              token: token,
+                              conversationId: widget.conversationId,
+                              videoFile: videoFile,
+                            );
+                          } else {
+                            Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
+                            Get.toNamed(Routes.login);
+                          }
+                          isSending.value = false;
+                        },
+                        onStartRecording: () => controller.startRecording(),
+                        onStopRecording: () async {
+                          _forceScrollNextUpdate = true;
 
-                    // ===== Bouton flottant “⬇︎” + badge =====
-                    Positioned(
-                      right: 14,
-                      bottom: 92, // au-dessus de l'input (suit l’AnimatedPadding)
-                      child: IgnorePointer(
-                        ignoring: !_showJumpDownBtn,
-                        child: AnimatedScale(
+                          isSending.value = true;
+                          final token = await Get.find<UserController>().getToken();
+                          if (token != null && token.isNotEmpty) {
+                            await controller.stopRecording(
+                              token: token,
+                              conversationId: widget.conversationId,
+                            );
+                          } else {
+                            Get.snackbar('Error', 'Failed to retrieve token.', backgroundColor: Colors.red, colorText: Colors.white);
+                            Get.toNamed(Routes.login);
+                          }
+                          isSending.value = false;
+                        },
+                        onDiscardRecording: () => controller.discardRecording(),
+                      ),
+                    ],
+                  ),
+
+                  // ===== Bouton flottant “⬇︎” + badge =====
+                  Positioned(
+                    right: 14,
+                    bottom: 92, // au-dessus de l'input (suit l’AnimatedPadding)
+                    child: IgnorePointer(
+                      ignoring: !_showJumpDownBtn,
+                      child: AnimatedScale(
+                        duration: const Duration(milliseconds: 140),
+                        scale: _showJumpDownBtn ? 1.0 : 0.0,
+                        child: AnimatedOpacity(
                           duration: const Duration(milliseconds: 140),
-                          scale: _showJumpDownBtn ? 1.0 : 0.0,
-                          child: AnimatedOpacity(
-                            duration: const Duration(milliseconds: 140),
-                            opacity: _showJumpDownBtn ? 1.0 : 0.0,
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                FloatingActionButton(
-                                  heroTag: 'jumpDownBtn_${ChatRoomPage}',
-                                  mini: true,
-                                  onPressed: () {
-                                    HapticFeedback.selectionClick();
-                                    _newMsgBadge = 0;
-                                    setState(() {});
-                                    _jumpToBottom(smooth: true);
-                                  },
-                                  backgroundColor: theme.colorScheme.primary,
-                                  child: const Icon(Icons.arrow_downward, color: Colors.white),
-                                ),
-                                if (_newMsgBadge > 0)
-                                  Positioned(
-                                    right: -2,
-                                    top: -2,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      constraints: const BoxConstraints(minWidth: 20),
-                                      decoration: BoxDecoration(
-                                        color: Colors.redAccent,
-                                        borderRadius: BorderRadius.circular(10),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withOpacity(0.2),
-                                            blurRadius: 4,
-                                            offset: const Offset(0, 2),
-                                          ),
-                                        ],
-                                      ),
-                                      child: Text(
-                                        _newMsgBadge > 99 ? '99+' : '$_newMsgBadge',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
+                          opacity: _showJumpDownBtn ? 1.0 : 0.0,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              FloatingActionButton(
+                                heroTag: 'jumpDownBtn_${ChatRoomPage}',
+                                mini: true,
+                                onPressed: () {
+                                  HapticFeedback.selectionClick();
+                                  _newMsgBadge = 0;
+                                  setState(() {});
+                                  _jumpToBottom(smooth: true);
+                                },
+                                backgroundColor: theme.colorScheme.primary,
+                                child: const Icon(Icons.arrow_downward, color: Colors.white),
+                              ),
+                              if (_newMsgBadge > 0)
+                                Positioned(
+                                  right: -2,
+                                  top: -2,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    constraints: const BoxConstraints(minWidth: 20),
+                                    decoration: BoxDecoration(
+                                      color: Colors.redAccent,
+                                      borderRadius: BorderRadius.circular(10),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.2),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
                                         ),
-                                        textAlign: TextAlign.center,
+                                      ],
+                                    ),
+                                    child: Text(
+                                      _newMsgBadge > 99 ? '99+' : '$_newMsgBadge',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
                                       ),
+                                      textAlign: TextAlign.center,
                                     ),
                                   ),
-                              ],
-                            ),
+                                ),
+                            ],
                           ),
                         ),
                       ),
                     ),
-                  ],
-                ),
-              );
-            }),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -611,5 +632,54 @@ class _ChatRoomPageState extends State<ChatRoomPage> with TickerProviderStateMix
     }
     print('No recipientID found: conversation=$conversation, currentUserId=$currentUserId');
     return '';
+  }
+}
+
+/// Loader circulaire “moderne” compact pour la zone de messages
+class _ModernSpinner extends StatelessWidget {
+  final Color primary;
+  final Color secondary;
+  final Color background;
+
+  const _ModernSpinner({
+    required this.primary,
+    required this.secondary,
+    required this.background,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: SizedBox(
+          width: 46,
+          height: 46,
+          child: ShaderMask(
+            shaderCallback: (Rect rect) {
+              return SweepGradient(
+                startAngle: 0.0,
+                endAngle: 6.28318, // 2π
+                colors: [
+                  primary,
+                  secondary,
+                  primary.withOpacity(0.2),
+                  primary,
+                ],
+                stops: const [0.0, 0.45, 0.75, 1.0],
+              ).createShader(rect);
+            },
+            child: const CircularProgressIndicator(
+              strokeWidth: 4,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

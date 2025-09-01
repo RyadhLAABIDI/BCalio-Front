@@ -8,6 +8,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl_phone_field/phone_number.dart';
 import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
 import '../../controllers/user_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../services/sms_verification_service.dart';
@@ -29,6 +32,9 @@ class _LoginPageState extends State<PhoneLoginPage> {
   PhoneNumber number = PhoneNumber(countryCode: "216", countryISOCode: "TN", number: '');
   bool _loading = false;
   FocusNode focusNode = FocusNode();
+
+  // Option B : on stocke le numéro complet E.164 fourni par IntlPhoneField (sans espaces)
+  String _e164 = '';
 
   @override
   Widget build(BuildContext context) {
@@ -67,8 +73,8 @@ class _LoginPageState extends State<PhoneLoginPage> {
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 80),
               child: Column(
                 children: [
-                Lottie.asset('assets/json/phone_number.json'),
-                const SizedBox(height: 20),
+                  Lottie.asset('assets/json/phone_number.json'),
+                  const SizedBox(height: 20),
                   const SizedBox(height: 20),
                   Text(
                     "verification_message".tr,
@@ -127,31 +133,60 @@ class _LoginPageState extends State<PhoneLoginPage> {
           border: InputBorder.none,
         ),
         initialCountryCode: "TN",
+        controller: _phoneController,
         onChanged: (phone) {
-          print(phone.completeNumber);
+          _e164 = phone.completeNumber.replaceAll(' ', '');
         },
         onSaved: (newValue) => number = newValue!,
-        onCountryChanged: (country) {
-          print('Country changed to: ' + country.name);
-        },
-        controller: _phoneController,
       ),
     );
   }
 
+  // =========================
+  //  Envoi OTP via BACKEND
+  // =========================
+  Future<bool> _sendOtpViaBackend(String phoneE164, String otp) async {
+    const String baseUrl = 'https://backendcall.b-callio.com';
+    final uri = Uri.parse('$baseUrl/api/invite-sms');
+
+    final text = "BCalio : Votre code est $otp. Valide 10 minutes. Ne le partagez jamais.";
+    const bearer = 'Bearer public-otp';
+
+    final resp = await http.post(
+      uri,
+      headers: {
+        'Authorization': bearer,
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({"phone": phoneE164, "text": text}),
+    );
+
+    debugPrint('[OTP via backend] ${resp.statusCode} ${resp.body}');
+    return resp.statusCode == 200;
+  }
+
   void _submitPhoneNumber() async {
     setState(() => _loading = true);
-    final phoneNumber = "+${number.countryCode} ${_phoneController.text.trim()}";
-    debugPrint("phone ============$phoneNumber");
+
+    final localDigits = _phoneController.text.trim().replaceAll(RegExp(r'[^0-9]'), '');
+    final phoneNumber = _e164.isNotEmpty ? _e164 : '+${number.countryCode}$localDigits';
+
+    debugPrint("phone (E.164) = $phoneNumber");
+
     final smsService = SmsVerificationService();
     final otp = smsService.generateOTP();
-    final isOTPSent = await smsService.sendOTP(phoneNumber, otp);
+
+    final isOTPSent = await _sendOtpViaBackend(phoneNumber, otp);
+
     setState(() => _loading = false);
     if (isOTPSent) {
       showSuccessSnackbar("OTP sent to $phoneNumber");
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('isForgotPassword', false);
-      Get.toNamed('/otpVerification', arguments: {'phoneNumber': phoneNumber, 'otp': otp});
+      Get.toNamed(
+        '/otpVerification',
+        arguments: {'phoneNumber': phoneNumber, 'otp': otp, 'flow': 'signup'}, // ⬅️ ICI
+      );
     } else {
       showErrorSnackbar("failed_to_send_OTP._please_try_again.".tr);
     }

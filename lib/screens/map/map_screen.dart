@@ -239,14 +239,7 @@ class _MapScreenState extends State<MapScreen> {
         isLoading = false;
       });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Tap a marker to show route, double-tap for details".tr),
-            duration: const Duration(seconds: 6),
-          ),
-        );
-      }
+      // ⛔️ SnackBar d'aide supprimé ici (aucun autre changement)
 
       _fitAllSafe();
     } catch (e) {
@@ -490,7 +483,7 @@ class _MapScreenState extends State<MapScreen> {
       children: [
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.elite.bcalio',
+          userAgentPackageName: 'com.elite.bcalio.app',
         ),
         if (_polylines.isNotEmpty) PolylineLayer(polylines: _polylines),
         MarkerClusterLayerWidget(

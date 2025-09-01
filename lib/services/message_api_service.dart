@@ -13,6 +13,7 @@ import 'package:pdfx/pdfx.dart';
 
 import '../models/true_message_model.dart';
 import '../utils/misc.dart';
+import 'http_errors.dart'; // ⬅️ pour remonter 401
 
 class MessageApiService {
   final cloudinary = Cloudinary.unsignedConfig(
@@ -37,6 +38,8 @@ class MessageApiService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final List<dynamic> messagesJson = json.decode(response.body);
         return messagesJson.map((json) => Message.fromJson(json)).toList();
+      } else if (response.statusCode == 401) {
+        throw UnauthorizedException(response.body);
       } else {
         debugPrint('Error: ${response.statusCode}, ${response.body}');
         throw Exception('Failed to fetch messages: ${response.body}');
@@ -79,7 +82,7 @@ class MessageApiService {
     }
     if (video != null && video.isNotEmpty) {
       debugPrint('video send api ============$video');
-      // ✅ FIX: envoyer la vidéo dans le champ "video" (et non "audio")
+      // ✅ envoyer la vidéo dans le champ "video"
       bodyPayload['video'] = video;
     }
 
@@ -98,6 +101,8 @@ class MessageApiService {
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return Message.fromJson(json.decode(response.body));
+      } else if (response.statusCode == 401) {
+        throw UnauthorizedException(response.body);
       } else {
         debugPrint('Error: ${response.statusCode}, ${response.body}');
         throw Exception('Failed to send message: ${response.body}');
@@ -262,6 +267,8 @@ class MessageApiService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         debugPrint('Message deleted successfully');
         return true;
+      } else if (response.statusCode == 401) {
+        throw UnauthorizedException(response.body);
       } else {
         debugPrint('Error: ${response.statusCode}, ${response.body}');
         throw Exception('Failed to delete message: ${response.body}');

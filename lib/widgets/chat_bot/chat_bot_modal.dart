@@ -175,7 +175,7 @@ class _ChatbotModalState extends State<ChatbotModal>
                       ),
                       const SizedBox(width: 12),
                       Text(
-                        'BCalio-AI',
+                        'BCalio-AI'.tr,
                         style: theme.textTheme.titleLarge?.copyWith(
                           color: isDarkMode ? Colors.white : Colors.black,
                           fontWeight: FontWeight.bold,
@@ -259,14 +259,14 @@ class _ChatbotModalState extends State<ChatbotModal>
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'Hi! I\'m your AI assistant',
+                                      'Hi! I\'m your AI assistant'.tr,
                                       style: theme.textTheme.bodyLarge?.copyWith(
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                     const SizedBox(height: 8),
                                     Text(
-                                      'Ask me anything, and I\'ll help you find answers',
+                                      'Ask me anything, and I\'ll help you find answers'.tr,
                                       style: theme.textTheme.bodyMedium,
                                     ),
                                   ],

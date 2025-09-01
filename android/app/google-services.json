@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "173326883920",
-    "project_id": "b-callio",
-    "storage_bucket": "b-callio.firebasestorage.app"
+    "project_number": "953761270388",
+    "project_id": "bcalionew",
+    "storage_bucket": "bcalionew.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:173326883920:android:22571e3c8dbf9e3cf74555",
+        "mobilesdk_app_id": "1:953761270388:android:3f44cf85605f5ec5e41f21",
         "android_client_info": {
-          "package_name": "com.elite.bcalio"
+          "package_name": "com.elite.bcalio.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAXzXQxqAW2Vbd3llGWU0Wq59OGF3X3298"
+          "current_key": "AIzaSyAfEjNAPvcBknt9secRYzewxmsbbI-tm7k"
         }
       ],
       "services": {

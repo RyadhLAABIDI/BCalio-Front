@@ -6,13 +6,14 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_messaging/firebase_messaging.dart';
-
 import '../models/true_user_model.dart';
 import '../services/socket_service.dart';
 import '../services/user_api_service.dart';
 import '../utils/misc.dart';
 // [SYNC] ajoute
 import '../services/contacts_sync_service.dart';
+// ⬇️ pour intercepter les 401 venant des services
+import '../services/http_errors.dart';
 
 class UserController extends GetxController {
   final UserApiService userApiService;
@@ -115,11 +116,12 @@ class UserController extends GetxController {
   Future<void> _restoreSessionAndRegister() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token')  ?? '';
-      final uid   = prefs.getString('userId') ?? '';
-      final name  = prefs.getString('name')   ?? '';
+      final token = prefs.getString('token')        ?? '';
+      final uid   = prefs.getString('userId')       ?? '';
+      final name  = prefs.getString('name')         ?? '';
       final image = prefs.getString('image');
       final about = prefs.getString('about');
+      final phone = prefs.getString('phoneNumber'); // ⬅️ persisted
 
       if (token.isEmpty || uid.isEmpty || name.isEmpty) {
         debugPrint('[Session] no persisted session to restore');
@@ -133,10 +135,33 @@ class UserController extends GetxController {
         name: name,
         image: image,
         about: about,
+        phoneNumber: phone, // ⬅️ hydrate phone from prefs
       );
 
       _currentUser.value = u;
       debugPrint('[Session] restored → $uid / $name');
+
+      // 🔄 Hydrate phoneNumber si manquant (appel léger)
+      if ((u.phoneNumber ?? '').isEmpty) {
+        try {
+          final fromApi = await userApiService.getUser(uid);
+          final fetchedPhone = fromApi?.phoneNumber ?? '';
+          if (fetchedPhone.trim().isNotEmpty) {
+            // ✅ Pas de copyWith → on reconstruit l'objet User
+            _currentUser.value = User(
+              id: u.id,
+              email: u.email,
+              name: u.name,
+              image: u.image,
+              about: u.about,
+              phoneNumber: fetchedPhone,
+            );
+            await prefs.setString('phoneNumber', fetchedPhone);
+          }
+        } catch (_) {
+          // on ignore si l'API ne renvoie pas le numéro
+        }
+      }
     } catch (e) {
       debugPrint('[Session] restore error: $e');
     }
@@ -217,6 +242,7 @@ class UserController extends GetxController {
     return {'email': p.getString('email'), 'password': p.getString('password')};
   }
 
+  /// 🔐 Login "normal" (avec navigation)
   Future<void> login(String email, String password) async {
     isLoading.value = true;
     try {
@@ -228,10 +254,11 @@ class UserController extends GetxController {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs
-        ..setString('name',   auth.user.name)
-        ..setString('image',  auth.user.image ?? '')
-        ..setString('about',  auth.user.about ?? '')
-        ..setString('userId', auth.user.id);
+        ..setString('name',        auth.user.name)
+        ..setString('image',       auth.user.image ?? '')
+        ..setString('about',       auth.user.about ?? '')
+        ..setString('userId',      auth.user.id)
+        ..setString('phoneNumber', auth.user.phoneNumber ?? '');   // ⬅️ persist phone
 
       await _ensureFcmRegistered();
       Get.offAllNamed('/navigationScreen');
@@ -239,6 +266,54 @@ class UserController extends GetxController {
       showSnackbar('Please check your credentials'.tr);
     } finally {
       isLoading.value = false;
+    }
+  }
+
+  /// 🔄 Re-login silencieux (aucune navigation)
+  Future<void> reLoginSilently() async {
+    final creds = await getCredentials();
+    final email = creds['email'];
+    final pass  = creds['password'];
+    if ((email ?? '').isEmpty || (pass ?? '').isEmpty) {
+      throw UnauthorizedException('Missing stored credentials');
+    }
+
+    final auth = await userApiService.login(email: email!, password: pass!);
+
+    _currentUser.value = auth.user;
+    await _saveToken(auth.token);
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs
+      ..setString('name',        auth.user.name)
+      ..setString('image',       auth.user.image ?? '')
+      ..setString('about',       auth.user.about ?? '')
+      ..setString('userId',      auth.user.id)
+      ..setString('phoneNumber', auth.user.phoneNumber ?? '');
+
+    await _ensureFcmRegistered();
+    debugPrint('[Auth] Silent re-login OK');
+  }
+
+  /// 🛡️ Enveloppe pour relancer l’appel si 401
+  Future<T> withAuthRetry<T>(Future<T> Function(String token) op, {int maxRetries = 1}) async {
+    String token = (await getToken()) ?? '';
+    if (token.isEmpty) {
+      // pas de token → tente direct une reconnexion silencieuse
+      await reLoginSilently();
+      token = (await getToken()) ?? '';
+      if (token.isEmpty) throw UnauthorizedException('No token after re-login');
+    }
+
+    try {
+      return await op(token);
+    } on UnauthorizedException {
+      if (maxRetries <= 0) rethrow;
+      debugPrint('[Auth] 401 → trying silent re-login…');
+      await reLoginSilently();
+      final newToken = (await getToken()) ?? '';
+      if (newToken.isEmpty) throw UnauthorizedException('No token after re-login');
+      return await op(newToken);
     }
   }
 
@@ -295,37 +370,39 @@ class UserController extends GetxController {
   }
 
   Future<void> updateProfile({
-    required String name,
-    required String image,
-    required String about,
-    required String geolocalisation,
-    required String screenshotToken,
-    required String rfcToken,
-  }) async {
-    isLoading.value = true;
-    try {
-      final updated = await userApiService.updateProfile(
-        name: name,
-        image: image,
-        about: about,
-        geolocalisation: geolocalisation,
-        screenshotToken: screenshotToken,
-        rfcToken: rfcToken,
-      );
-      _currentUser.value = updated;
+  required String name,
+  required String image,
+  required String about,
+  required String geolocalisation,
+  required String screenshotToken,
+  required String rfcToken,
+}) async {
+  isLoading.value = true;
+  try {
+    final updated = await userApiService.updateProfile(
+      name: name,
+      image: image,
+      about: about,
+      geolocalisation: geolocalisation,
+      screenshotToken: screenshotToken,
+      rfcToken: rfcToken,
+    );
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs
-        ..setString('name',  updated.name)
-        ..setString('image', updated.image ?? '')
-        ..setString('about', updated.about ?? '');
-    } catch (_) {
-      Get.snackbar('Error'.tr, 'Failed to update profile'.tr,
-          backgroundColor: Colors.red, colorText: Colors.white);
-    } finally {
-      isLoading.value = false;
-    }
+    _currentUser.value = updated;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs
+      ..setString('name',        updated.name)
+      ..setString('image',       updated.image ?? '')
+      ..setString('about',       updated.about ?? '')
+      ..setString('phoneNumber', updated.phoneNumber ?? '');
+  } catch (_) {
+    // plus de snackbar ni de message à l’utilisateur
+    debugPrint('[UserController] updateProfile failed (silencieux)');
+  } finally {
+    isLoading.value = false;
   }
+}
 
   Future<List<User>> fetchUsers(String token) async {
     try {
