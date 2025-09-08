@@ -378,9 +378,55 @@ class AppTranslation extends Translations {
   'my_qr': 'Mon QR',
   'connection_issue': 'Problème de connexion',
   'check_connection': 'Vérifiez votre connexion internet ou réessayez plus tard.',
+  // ======= Onboarding Lang =======
+          'choose_language': 'Choisis ta langue',
+          'change_anytime_hint': 'Tu pourras la modifier à tout moment dans Réglages → Langue, en bas.',
+          'app_language': 'Langue de l’application',
+          'tip_change_later': 'Astuce : tu peux aussi changer la langue plus tard dans Réglages.',
+          'continue_btn': 'Continuer',
+          'lang_english': 'Anglais',
+          'lang_french': 'Français',
+          'lang_arabic': 'Arabe',
+
+          'rooms': 'Rooms',
+  
+  'room_id_optional': 'ID de room (optionnel)',
+  'join_create': 'Rejoindre / Créer',
+  'instructions': 'Instructions',
+  'swipe_up': 'Balayez vers le haut',
+  'quick_guide': 'Guide rapide',
+  'bullet_name': 'Entrez votre nom — il s’affiche dans la room.',
+  'bullet_join': 'Pour rejoindre : collez un ID de room reçu.',
+  'bullet_create': 'Pour créer : laissez vide, puis « Rejoindre / Créer ».',
+  'bullet_share': 'Partagez l’ID après entrée pour inviter quelqu’un.',
+  'tip_more': 'Astuce : gardez ce sheet tiré vers le haut pour voir plus ✨',
+
+  
+  'Room': 'Room',
+
+  'Secure Encryption': 'Chiffrement sécurisé',
+          'All your data is end-to-end encrypted':
+              'Toutes vos données sont chiffrées de bout en bout',
+          'Cloud Sync': 'Synchronisation cloud',
+          'Access your data from any device':
+              'Accédez à vos données depuis n’importe quel appareil',
+          'Lightning Fast': 'Ultra rapide',
+          'Optimized for maximum performance':
+              'Optimisé pour des performances maximales',
+  
 
         },
         'ar_AR': {
+
+          // ======= Onboarding Lang =======
+          'choose_language': 'اختر لغتك',
+          'change_anytime_hint': 'يمكنك تغييرها في أي وقت من الإعدادات → اللغة أسفل الشاشة.',
+          'app_language': 'لغة التطبيق',
+          'tip_change_later': 'نصيحة: يمكنك أيضًا تغيير اللغة لاحقًا من الإعدادات.',
+          'continue_btn': 'متابعة',
+          'lang_english': 'الإنجليزية',
+          'lang_french': 'الفرنسية',
+          'lang_arabic': 'العربية',
           'retry': 'إعادة المحاولة',
           'add': 'إضافة',
           "clear_conversation": "مسح المحادثة",
@@ -742,9 +788,41 @@ class AppTranslation extends Translations {
   'my_qr': 'رمزي QR',
   'connection_issue': 'مشكلة في الاتصال',
   'check_connection': 'تحقق من اتصالك بالإنترنت أو أعد المحاولة لاحقًا.',
+  'rooms': 'الغُرَف',
+  
+  'room_id_optional': 'معرّف الغرفة (اختياري)',
+  'join_create': 'انضم / أنشئ',
+  'instructions': 'التعليمات',
+  'swipe_up': 'اسحب للأعلى',
+  'quick_guide': 'دليل سريع',
+  'bullet_name': 'اكتب اسمك — سيظهر داخل الغرفة.',
+  'bullet_join': 'للإنضمام: ألصِق معرّف غرفة وصلك.',
+  'bullet_create': 'للإنشاء: اتركه فارغًا ثم اضغط « انضم / أنشئ ».',
+  'bullet_share': 'شارك المعرّف بعد الدخول لدعوة الآخرين.',
+  'tip_more': 'نصيحة: ابقِ هذه الورقة مرفوعة للأعلى لمزيد من المعلومات ✨',
+
+   'Secure Encryption': 'تشفير آمن',
+          'All your data is end-to-end encrypted':
+              'جميع بياناتك مشفّرة من طرف إلى طرف',
+          'Cloud Sync': 'مزامنة سحابية',
+          'Access your data from any device':
+              'يمكنك الوصول إلى بياناتك من أي جهاز',
+          'Lightning Fast': 'سريع جدًا',
+          'Optimized for maximum performance':
+              'محسّن لأقصى أداء',
+
 
         },
         'en_US': {
+           // ======= Onboarding Lang =======
+          'choose_language': 'Choose your language',
+          'change_anytime_hint': 'You can change it anytime in Settings → Language at the bottom.',
+          'app_language': 'App language',
+          'tip_change_later': 'Tip: You can also change language later in Settings.',
+          'continue_btn': 'Continue',
+          'lang_english': 'English',
+          'lang_french': 'Français',
+          'lang_arabic': 'العربية',
           'check_connection': 'Check your internet connection or try again later.',
           'retry': 'Retry',
           'connection_issue': 'Connection issue',
@@ -1107,6 +1185,33 @@ class AppTranslation extends Translations {
   'swipe_to_answer': 'Swipe to answer',
 'scan_qr': 'Scan QR',
   'my_qr': 'My QR',
+
+  'rooms': 'Rooms',
+  
+  'room_id_optional': 'Room ID (optional)',
+  'join_create': 'Join / Create',
+  'instructions': 'Instructions',
+  'swipe_up': 'Swipe up',
+  'quick_guide': 'Quick guide',
+  'bullet_name': 'Enter your name — it appears in the room.',
+  'bullet_join': 'To join: paste a Room ID you received.',
+  'bullet_create': 'To create: leave it empty, then “Join / Create”.',
+  'bullet_share': 'Share the ID after entering to invite someone.',
+  'tip_more': 'Tip: keep this sheet pulled up to see more ✨',
+
+  
+  'Room': 'Room',
+
+  'Secure Encryption': 'Secure Encryption',
+          'All your data is end-to-end encrypted':
+              'All your data is end-to-end encrypted',
+          'Cloud Sync': 'Cloud Sync',
+          'Access your data from any device':
+              'Access your data from any device',
+          'Lightning Fast': 'Lightning Fast',
+          'Optimized for maximum performance':
+              'Optimized for maximum performance',
+  
 
         },
       };

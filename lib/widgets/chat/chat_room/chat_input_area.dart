@@ -22,6 +22,9 @@ class ChatInputArea extends StatefulWidget {
   // NEW: callback de saisie (pour “typing”)
   final ValueChanged<String>? onChanged;
 
+  // NEW: bouton “image” (ouvre la galerie système)
+  final VoidCallback? onTapGallery;
+
   ChatInputArea({
     super.key,
     required this.onSend,
@@ -37,7 +40,8 @@ class ChatInputArea extends StatefulWidget {
     required this.inputBorder,
     required this.inputFillColor,
     required this.inputTextStyle,
-    this.onChanged, // NEW
+    this.onChanged,
+    this.onTapGallery, // NEW
   });
 
   @override
@@ -101,12 +105,12 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
     final theme = Theme.of(context);
     final isDarkMode = theme.brightness == Brightness.dark;
 
-    // Couleurs du bouton d'action (envoyer / micro)
     final Color actionBg = theme.appBarTheme.backgroundColor ?? theme.colorScheme.primary;
     final Color actionIconColor = isDarkMode ? Colors.white : Colors.black;
 
     return Obx(() {
       if (widget.isRecording.value) {
+        // (bloc enregistrement inchangé)
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
@@ -197,15 +201,16 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
         ),
         child: Row(
           children: [
-            IconButton(
-              onPressed: () => _showAttachmentOptions(context),
-              icon: Icon(
-                Iconsax.paperclip_2,
-                color: widget.iconColor,
-                size: 24,
+            // NEW: bouton image (galerie directe)
+            if (widget.onTapGallery != null)
+              IconButton(
+                onPressed: widget.onTapGallery,
+                icon: Icon(Iconsax.image, color: widget.iconColor, size: 24),
+                tooltip: 'Gallery',
               ),
-              tooltip: 'Attach',
-            ),
+
+            // ⚠️ Le bouton trombone (attach) a été retiré comme demandé.
+
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
@@ -216,7 +221,7 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
                   focusNode: _focusNode,
                   controller: _messageController,
                   maxLines: null,
-                  onChanged: widget.onChanged, // propage la saisie
+                  onChanged: widget.onChanged,
                   decoration: InputDecoration(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     hintText: "Type a message".tr,
@@ -243,7 +248,6 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
                       final message = _messageController.text.trim();
                       if (message.isNotEmpty) {
                         _messageController.clear();
-                        // prévenir controller que le champ est vide → stop-typing
                         widget.onChanged?.call('');
                         widget.onSend(message);
                       }
@@ -265,7 +269,7 @@ class _ChatInputAreaState extends State<ChatInputArea> with SingleTickerProvider
                       )
                     : Icon(
                         _isTextEmpty ? Iconsax.microphone : Iconsax.send_1,
-                        color: actionIconColor, // ← noir en light, blanc en dark
+                        color: actionIconColor,
                         size: 24,
                       ),
               ),

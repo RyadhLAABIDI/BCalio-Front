@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
-import 'package:flutter/services.dart'; // 👈 MethodChannel (ui_accept / ui_reject)
+import 'package:flutter/services.dart';
 
 import '../../../controllers/user_controller.dart';
 import '../../../services/webrtccontroller.dart';
@@ -12,6 +12,9 @@ import '../../../services/webrtccontroller.dart';
 /* ---- Journal d’appel ---- */
 import '../../../controllers/call_log_controller.dart';
 import '../../../models/call_log_model.dart';
+
+/* ✅ Session globale d'appel : mini-barre + restauration */
+import '../../../controllers/call_session_controller.dart';
 
 class AudioCallScreen extends StatefulWidget {
   final String name;
@@ -26,8 +29,11 @@ class AudioCallScreen extends StatefulWidget {
   final bool isGroup;
   final List<String>? memberIds; // sans moi
 
-  // 👇 flag pour gérer l’accept côté destinataire (cas autoAccept)
+  // auto-accept
   final bool shouldSendLocalAccept;
+
+  // restauration depuis mini-barre
+  final bool isRestored;
 
   const AudioCallScreen({
     super.key,
@@ -41,6 +47,7 @@ class AudioCallScreen extends StatefulWidget {
     this.isGroup = false,
     this.memberIds,
     this.shouldSendLocalAccept = false,
+    this.isRestored = false,
   });
 
   @override
@@ -50,27 +57,34 @@ class AudioCallScreen extends StatefulWidget {
 class _AudioCallScreenState extends State<AudioCallScreen>
     with SingleTickerProviderStateMixin {
 
-  static const _platform = MethodChannel('incoming_calls'); // 👈
+  static const _platform = MethodChannel('incoming_calls');
+
+  final CallSessionController _sess = Get.find<CallSessionController>();
+  bool _reuseRtc = false;
 
   bool _micOn      = true;
   bool _speakerOn  = true;
   bool _show       = true;
-  bool _sent       = false;        // pour l’appelant
-  bool _acceptSent = false;        // destinataire (local accept)
+  bool _sent       = false;
+  bool _acceptSent = false;
 
-  // ⬇️ Anti-doublons / contrôle de fin locale
   bool _handledTerminal = false;
   bool _locallyEnded    = false;
   bool _endSignaled     = false;
 
-  // ⬇️ Marquage natif (empêche “missed” tardifs côté Android)
   bool _nativeAcceptMarked  = false;
   bool _nativeRejectMarked  = false;
+
+  bool   _peerOnline      = true;
+  bool   _mediaHealthy    = true;
+  bool   _linkDown        = false;
+  DateTime? _linkDownSince;
+  String? _statusHint;
 
   late final AnimationController _anim;
   late final Animation<double>   _scale;
 
-  late final WebRTCController _rtc;
+  late WebRTCController _rtc;
 
   String?   _callId;
   DateTime? _start;
@@ -80,7 +94,6 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
   bool get _isGroup => widget.isGroup == true;
 
-  // -------- helper: fermeture sûre (évite le bug GetX snackbar) --------
   void _safePop() {
     if (!mounted) return;
     try {
@@ -98,15 +111,41 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     _anim.forward();
 
     final me = Get.find<UserController>();
-    _rtc = WebRTCController(
-      baseUrl  : 'https://backendcall.b-callio.com',
-      callId   : '${me.userId}_${_isGroup ? 'group' : widget.recipientID}',
-      selfName : me.userName,
-      withVideo: false,
-    )..onInit();
-    _rtc.attachSocket(me.socketService);
 
-    // toasts groupe pour l’appelant
+    // ✅ réutilisation RTC UNIQUEMENT si restauration d'un appel EN COURS
+    if (widget.isRestored &&
+        _sess.rtc != null &&
+        _sess.isVideo.value == false &&
+        _sess.isOngoing.value) {
+      _rtc = _sess.rtc!;
+      _reuseRtc = true;
+      _start = _sess.startedAt; // ← reprend le chrono depuis la session
+    } else {
+      _rtc = WebRTCController(
+        baseUrl  : 'http://192.168.1.22:1906',
+        callId   : '${me.userId}_${_isGroup ? 'group' : widget.recipientID}',
+        selfName : me.userName,
+        withVideo: false,
+      )..onInit();
+      _rtc.attachSocket(me.socketService);
+    }
+
+    // bind méta + attache RTC à la session
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _sess.bindMeta(
+        displayName: widget.name,
+        avatar:      widget.avatarUrl,
+        meId:        widget.userId,
+        peerId:      _isGroup ? '' : widget.recipientID,
+        caller:      widget.isCaller,
+        group:       _isGroup,
+        members:     List<String>.from(widget.memberIds ?? const []),
+        cid:         widget.existingCallId,
+      );
+      if (!_reuseRtc) _sess.attachRtc(_rtc, video: false);
+    });
+
+    // toasts groupe (appelant)
     if (_isGroup && widget.isCaller) {
       _rtc.onUiParticipantJoined = (uid, name) =>
           _toast('${name.isNotEmpty ? name : uid} ${'a rejoint l’appel'.tr}');
@@ -115,12 +154,56 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
     final sock = me.socketService;
 
+    /* === Reprise réseau/peer -> renégociation === */
+    sock.onLinkDown = (cid) {
+      if (_start == null) return;
+      _statusHint = 'Problème de connexion… Reconnexion en cours'.tr;
+      if (mounted) setState(() {});
+      _showBanner('Problème de connexion chez ${widget.name}'.tr, Colors.orange);
+    };
+
+    sock.onLinkUp = (cid) async {
+      if (_start == null) return;
+      _peerOnline = true;
+      _statusHint = 'Connexion rétablie'.tr;
+      if (mounted) setState(() {});
+      _showBanner('Connexion rétablie'.tr, Colors.greenAccent);
+      await _rtc.renegotiateAll();
+    };
+
+    sock.onPeerSuspended = (cid, uid) {
+      if (_isGroup) return;
+      if (uid != widget.recipientID) return;
+      _peerOnline = false;
+      _refreshLinkHealth(showBanner: true, force: true);
+    };
+
+    sock.onPeerResumed = (cid, uid) async {
+      if (_isGroup) return;
+      if (uid != widget.recipientID) return;
+      _peerOnline = true;
+      _statusHint = 'Connexion rétablie'.tr;
+      if (mounted) setState(() {});
+      _showBanner('Connexion rétablie'.tr, Colors.greenAccent);
+      await _rtc.renegotiateAll();
+    };
+
+    // présence socket du pair
+    sock.onPresenceUpdate = (uid, online, lastSeen) {
+      final other = widget.recipientID;
+      if (_isGroup || uid != other) return;
+      if (_start == null) return;
+      final wasOnline = _peerOnline;
+      _peerOnline = online;
+      _refreshLinkHealth(showBanner: true, force: wasOnline != online);
+    };
+
     sock.onCallInitiated = (cid) {
       if (_callId == null && mounted) setState(() => _callId = cid);
     };
 
-    // APPELANT : émet l’appel + ringback + fallback timeout
-    if (widget.isCaller && !_sent) {
+    // APPELANT : émettre (pas en restauration)
+    if (widget.isCaller && !_sent && !widget.isRestored) {
       _sent = true;
       CallSounds.playRingBack();
 
@@ -140,7 +223,6 @@ class _AudioCallScreenState extends State<AudioCallScreen>
         _finishAfterBeep(() => CallSounds.playEndBeep());
         _log(CallStatus.timeout);
 
-        // annuler côté serveur pour fermer l’écran chez B
         try {
           final s = Get.find<UserController>().socketService;
           if (_callId != null) {
@@ -169,10 +251,11 @@ class _AudioCallScreenState extends State<AudioCallScreen>
         setState(() {
           _callId = cid;
           _start  = DateTime.now();
+          _statusHint = null;
         });
       }
+      _sess.markAcceptedNow(); // ← important pour la mini-barre & la restauration
 
-      // 👇 Marque "accepted" côté Android pour (A et B)
       if (!_nativeAcceptMarked) {
         _nativeAcceptMarked = true;
         final idToMark = (cid.isNotEmpty)
@@ -194,7 +277,6 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
 
-      // 👇 Marque "rejected" pour empêcher un "missed" parasite côté A
       if (!_nativeRejectMarked) {
         _nativeRejectMarked = true;
         final idToMark = _callId ?? widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
@@ -211,6 +293,8 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _showBanner('Occupé'.tr, Colors.red);
       _finishAfterBeep(() => CallSounds.playBusyOnce());
       _log(CallStatus.rejected);
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallEnded     = () {
@@ -221,15 +305,18 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _showBanner('Appel terminé'.tr, Colors.white70);
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.ended, endedAt: DateTime.now());
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallCancelled = () {
       if (_handledTerminal) return;
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
-      CallSounds.stopRingBack();
-      if (mounted) _safePop(); // ← au lieu de Get.back()
+      if (mounted) _safePop();
       _log(CallStatus.cancelled);
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallError     = (_) {
@@ -237,53 +324,115 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
-      if (mounted) _safePop(); // ← au lieu de Get.back()
+      if (mounted) _safePop();
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallTimeout   = () {
       if (_handledTerminal) return;
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
-      CallSounds.stopRingBack();
       _showBanner('Ne répond pas'.tr, Colors.orange);
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.timeout);
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
-    // 👇 destinataire auto-accept (depuis notif plein écran)
+    // =========================
+    // 🟢 DESTINATAIRE : auto-accept
+    // =========================
     if (!widget.isCaller && widget.shouldSendLocalAccept && !_acceptSent) {
       _acceptSent = true;
       final idToAccept = widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
-
-      // marque "accepted" immédiatement côté Android (coupe notif/alarme s’il en reste)
       try { _platform.invokeMethod('ui_accept', {'callId': idToAccept}); } catch (_) {}
-
       sock.acceptCall(idToAccept, widget.userId);
+
+      // ⭐ FIX: démarrage local immédiat (au cas où l’event réseau tarde)
+      _start ??= DateTime.now();
+      _sess.markAcceptedNow();
+      setState(() {}); // rafraîchit l’UI tout de suite
     }
 
     rtc.Helper.setSpeakerphoneOn(true);
 
+    // ⭐ filet de sécu : si déjà accepté mais pas d’event reçu
+    if (!widget.isCaller && (widget.existingCallId != null || widget.shouldSendLocalAccept)) {
+      if (_sess.startedAt == null) _sess.markAcceptedNow();
+      _start ??= _sess.startedAt;
+    }
+
+    // ⏱ Ticker: chrono + santé média
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_start != null && mounted) setState(() {});
+      if (!mounted) return;
+      if (_start != null) setState(() {});
+      _evaluateMediaHealth();
     });
   }
 
   @override
   void dispose() {
     _ticker.cancel();
-    _fallbackTimeout?.cancel();
-    CallSounds.stopRingBack();
-    rtc.Helper.setSpeakerphoneOn(false);
 
-    // n’émettre endCall qu’en cas de raccrochage local et si pas déjà envoyé
-    if (_locallyEnded && _callId != null && !_endSignaled) {
-      try { Get.find<UserController>().socketService.endCall(_callId!); } catch (_) {}
+    // garde le média actif si minimisé
+    final keepMedia = _sess.isOngoing.value &&
+                      _sess.isMinimized.value &&
+                      _sess.rtc == _rtc;
+
+    if (!keepMedia) {
+      _fallbackTimeout?.cancel();
+      CallSounds.stopRingBack();
+      rtc.Helper.setSpeakerphoneOn(false);
+
+      if (_locallyEnded && _callId != null && !_endSignaled) {
+        try { Get.find<UserController>().socketService.endCall(_callId!); } catch (_) {}
+      }
+
+      _rtc.leave();
     }
 
-    _rtc.leave();
     _anim.dispose();
     super.dispose();
   }
+
+  /* ───────────────────── Santé média & bannières ───────────────────── */
+
+  void _evaluateMediaHealth() {
+    final others = _rtc.participants.where((p) => p.id != 'self').toList();
+    final hasRemote = others.any((p) => p.stream != null);
+
+    final wasHealthy = _mediaHealthy;
+    _mediaHealthy = hasRemote;
+
+    if (_start == null || _isGroup) return;
+
+    if (wasHealthy != _mediaHealthy) {
+      _refreshLinkHealth(showBanner: true, force: true);
+    } else {
+      _refreshLinkHealth(showBanner: false);
+    }
+  }
+
+  void _refreshLinkHealth({required bool showBanner, bool force = false}) {
+    final wasDown = _linkDown;
+    _linkDown = !(_peerOnline && _mediaHealthy);
+
+    if (!force && wasDown == _linkDown) return;
+
+    if (_linkDown) {
+      _linkDownSince ??= DateTime.now();
+      _statusHint = 'Problème de connexion… Reconnexion en cours'.tr;
+      if (showBanner) _showBanner('Problème de connexion chez ${widget.name}'.tr, Colors.orange);
+    } else {
+      _linkDownSince = null;
+      _statusHint = 'Connexion rétablie'.tr;
+      if (showBanner) _showBanner('Connexion rétablie'.tr, Colors.greenAccent);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /* ───────────────────── UI helpers ───────────────────── */
 
   void _toggle() => setState(() => _show = !_show);
 
@@ -316,7 +465,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   Future<void> _finishAfterBeep(Future<void> Function() sound) async {
     try { await sound(); } catch (_) {}
     await Future.delayed(const Duration(milliseconds: 900));
-    if (mounted) _safePop(); // ← au lieu de Get.back()
+    if (mounted) _safePop();
   }
 
   String _fmt() {
@@ -354,33 +503,64 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   Widget build(BuildContext ctx) {
     final dark = Theme.of(ctx).brightness == Brightness.dark;
 
-    return Scaffold(
-      body: GestureDetector(
-        onTap: _toggle,
-        child: Stack(children: [
-          // renderers audio (cachés)
-          Obx(() => Stack(
-                children: _rtc.participants.map((p) {
-                  return Offstage(
-                    offstage: true,
-                    child: rtc.RTCVideoView(p.renderer),
-                  );
-                }).toList(),
-              )),
+    return WillPopScope(
+      onWillPop: () async {
+        // ↩️ BACK système → on minimise (PAS de flèche retour dans l'UI)
+        _sess.minimizeAndHideUI(context);
+        return false;
+      },
+      child: Scaffold(
+        body: GestureDetector(
+          onTap: _toggle,
+          child: Stack(children: [
+            // renderers audio (cachés)
+            Obx(() => Stack(
+                  children: _rtc.participants.map((p) {
+                    return Offstage(
+                      offstage: true,
+                      child: rtc.RTCVideoView(p.renderer),
+                    );
+                  }).toList(),
+                )),
 
-          Positioned.fill(
-              child: Image.asset(
-                dark ? 'assets/chat_bg_dark.png'
-                     : 'assets/chat_bg_light.png',
-                fit: BoxFit.cover,
-              )),
-          Positioned.fill(
-              child: Container(color: Colors.black.withOpacity(dark ? .7 : .4))),
+            Positioned.fill(
+                child: Image.asset(
+                  dark ? 'assets/chat_bg_dark.png'
+                       : 'assets/chat_bg_light.png',
+                  fit: BoxFit.cover,
+                )),
+            Positioned.fill(
+                child: Container(color: Colors.black.withOpacity(dark ? .7 : .4))),
 
-          _avatar(),
-          _infos(),
-          _controls(),
-        ]),
+            _avatar(),
+            _infos(),
+            _controls(),
+
+            // Badge de statut
+            if (_start != null && _statusHint != null)
+              Positioned(
+                left: 16, right: 16, bottom: 140,
+                child: Center(
+                  child: AnimatedOpacity(
+                    opacity: 1,
+                    duration: const Duration(milliseconds: 250),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        _statusHint!,
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ]),
+        ),
       ),
     );
   }
@@ -453,7 +633,6 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     _fallbackTimeout?.cancel();
     CallSounds.stopRingBack();
 
-    // marque la fin locale et bloque les prochains events terminaux
     _locallyEnded  = true;
     _handledTerminal = true;
 
@@ -468,10 +647,12 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       _log(CallStatus.ended, endedAt: DateTime.now());
       if (_callId != null) {
         sock.endCall(_callId!);
-        _endSignaled = true; // évite un second endCall en dispose
+        _endSignaled = true;
       }
     }
-    _safePop(); // ← au lieu de Get.back()
+
+    _sess.clearSession(disposeRtc: true); // 👈
+    _safePop();
   }
 
   Widget _btn(IconData icon,

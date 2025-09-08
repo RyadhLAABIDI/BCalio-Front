@@ -13,7 +13,7 @@ class Message {
   final String senderId;
   final User? sender;
   final List<User>? seenBy;
-  final bool isFromAI; // New field to identify AI-generated messages
+  final bool isFromAI;
 
   Message({
     required this.id,
@@ -28,34 +28,27 @@ class Message {
     required this.senderId,
     this.sender,
     this.seenBy,
-    this.isFromAI = false, // Default to false
+    this.isFromAI = false,
   });
 
-  /// Factory method to create a `Message` instance from JSON
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
-      id: json['id'] as String,
+      id: (json['id'] ?? json['_id'] ?? '') as String,
       body: json['body'] ?? '',
       image: json['image'] as String?,
       audio: json['audio'] as String?,
       video: json['video'] as String?,
       file: json['file'] as String?,
       type: json['type'] ?? 'text',
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.now(),
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
       conversationId: json['conversationId'] ?? '',
       senderId: json['senderId'] ?? '',
-      sender: json['sender'] != null
-          ? User.fromJson(json['sender'] as Map<String, dynamic>)
-          : null,
-      seenBy: (json['seen'] as List<dynamic>?)
-          ?.map((user) => User.fromJson(user as Map<String, dynamic>))
-          .toList(),
-      isFromAI: json['isFromAI'] ?? false, // Parse AI flag
+      sender: json['sender'] != null ? User.fromJson(json['sender'] as Map<String, dynamic>) : null,
+      seenBy: (json['seen'] as List<dynamic>?)?.map((u) => User.fromJson(u as Map<String, dynamic>)).toList(),
+      isFromAI: json['isFromAI'] ?? false,
     );
   }
 
-  /// Method to convert a `Message` instance to JSON
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -69,12 +62,11 @@ class Message {
       'conversationId': conversationId,
       'senderId': senderId,
       'sender': sender?.toJson(),
-      'seen': seenBy?.map((user) => user.toJson()).toList(),
-      'isFromAI': isFromAI, // Include AI flag
+      'seen': seenBy?.map((u) => u.toJson()).toList(),
+      'isFromAI': isFromAI,
     };
   }
 
-  /// Copy method to create a new `Message` with updated fields
   Message copyWith({
     String? id,
     String? body,
@@ -95,6 +87,8 @@ class Message {
       body: body ?? this.body,
       image: image ?? this.image,
       audio: audio ?? this.audio,
+      video: video ?? this.video,
+      file: file ?? this.file,
       type: type ?? this.type,
       createdAt: createdAt ?? this.createdAt,
       conversationId: conversationId ?? this.conversationId,

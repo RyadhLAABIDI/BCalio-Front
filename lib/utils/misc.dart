@@ -31,13 +31,13 @@ const String baseUrl = "https://app.b-callio.com/api";
 const String cloudName = 'bkalio';
 const String uploadPreset = 'telegram_preset';
 // Node (QR)
-const String qrNodeUrl = 'https://backendcall.b-callio.com';
+const String qrNodeUrl = 'http://192.168.1.22:1906';
 
 // API “pairing” (ton serveur local avec /api/pair/*)
-const String pairBaseUrl = 'https://backendcall.b-callio.com';
+const String pairBaseUrl = 'http://192.168.1.22:1906';
 
 // Serveur pair/sync local (même que pushBaseUrl de UserController)
-const String callServerBase = 'https://backendcall.b-callio.com';
+const String callServerBase = 'http://192.168.1.22:1906';
 
 
 

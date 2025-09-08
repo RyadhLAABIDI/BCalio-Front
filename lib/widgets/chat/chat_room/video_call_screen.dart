@@ -7,7 +7,7 @@ import 'package:get/get.dart';
 import 'package:iconsax/iconsax.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
-import 'package:collection/collection.dart'; // pour firstWhereOrNull
+import 'package:collection/collection.dart';
 
 import '../../../controllers/user_controller.dart';
 import '../../../services/webrtccontroller.dart';
@@ -15,6 +15,9 @@ import '../../../services/webrtccontroller.dart';
 /* ---- Journal d’appel ---- */
 import '../../../controllers/call_log_controller.dart';
 import '../../../models/call_log_model.dart';
+
+/* ✅ Session globale d'appel : mini-barre + restauration */
+import '../../../controllers/call_session_controller.dart';
 
 class VideoCallScreen extends StatefulWidget {
   final String name;
@@ -29,8 +32,11 @@ class VideoCallScreen extends StatefulWidget {
   final bool isGroup;
   final List<String>? memberIds; // sans moi
 
-  // 👇 flag pour autoAccept
+  // autoAccept
   final bool shouldSendLocalAccept;
+
+  // restauration
+  final bool isRestored;
 
   const VideoCallScreen({
     super.key,
@@ -44,6 +50,7 @@ class VideoCallScreen extends StatefulWidget {
     this.isGroup = false,
     this.memberIds,
     this.shouldSendLocalAccept = false,
+    this.isRestored = false,
   });
 
   @override
@@ -55,30 +62,37 @@ class _VideoCallScreenState extends State<VideoCallScreen>
 
   static const _platform = MethodChannel('incoming_calls'); // Android notifications
 
+  final CallSessionController _sess = Get.find<CallSessionController>();
+  bool _reuseRtc = false;
+
   bool _micOn     = true,
        _camOn     = true,
-       _speakerOn = true, // haut-parleur activé par défaut en vidéo
+       _speakerOn = true,
        _show      = true,
-       _sent      = false; // pour l’appelant
+       _sent      = false;
 
-  bool _acceptSent = false; // destinataire (local accept)
+  bool _acceptSent = false;
 
-  // ⬇️ Anti-doublons / contrôle de fin locale
   bool _handledTerminal = false;
   bool _locallyEnded    = false;
   bool _endSignaled     = false;
 
-  // ⬇️ Marquage natif
   bool _nativeAcceptMarked = false;
   bool _nativeRejectMarked = false;
+
+  bool   _peerOnline   = true;
+  bool   _videoHealthy = true;
+  bool   _linkDown     = false;
+  DateTime? _linkDownSince;
+  String? _statusHint;
 
   late final AnimationController _anim;
   late final Animation<double>   _scale;
 
-  late final WebRTCController _rtc;
+  late WebRTCController _rtc;
 
   String?   _callId;
-  DateTime? _start;          // null = sonnerie
+  DateTime? _start;
   late final Timer _ticker;
 
   Timer? _fallbackTimeout;
@@ -94,13 +108,39 @@ class _VideoCallScreenState extends State<VideoCallScreen>
     _anim.forward();
 
     final me = Get.find<UserController>();
-    _rtc = WebRTCController(
-      baseUrl  : 'https://backendcall.b-callio.com',
-      callId   : '${me.userId}_${_isGroup ? 'group' : widget.recipientID}',
-      selfName : me.userName,
-      withVideo: true,
-    )..onInit();
-    _rtc.attachSocket(me.socketService);
+
+    // ✅ réutiliser le RTC vidéo UNIQUEMENT si restauration d'un appel EN COURS
+    if (widget.isRestored &&
+        _sess.rtc != null &&
+        _sess.isVideo.value == true &&
+        _sess.isOngoing.value) {
+      _rtc = _sess.rtc!;
+      _reuseRtc = true;
+      _start = _sess.startedAt;
+    } else {
+      _rtc = WebRTCController(
+        baseUrl  : 'http://192.168.1.22:1906',
+        callId   : '${me.userId}_${_isGroup ? 'group' : widget.recipientID}',
+        selfName : me.userName,
+        withVideo: true,
+      )..onInit();
+      _rtc.attachSocket(me.socketService);
+    }
+
+    // ✅ bind métadonnées + attache RTC à la session
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _sess.bindMeta(
+        displayName: widget.name,
+        avatar:      widget.avatarUrl,
+        meId:        widget.userId,
+        peerId:      _isGroup ? '' : widget.recipientID,
+        caller:      widget.isCaller,
+        group:       _isGroup,
+        members:     List<String>.from(widget.memberIds ?? const []),
+        cid:         widget.existingCallId,
+      );
+      if (!_reuseRtc) _sess.attachRtc(_rtc, video: true);
+    });
 
     // Toasts UI (appelant en groupe)
     if (_isGroup && widget.isCaller) {
@@ -111,7 +151,51 @@ class _VideoCallScreenState extends State<VideoCallScreen>
 
     final sock = me.socketService;
 
-    // === 1) POSER LES LISTENERS AVANT D'ÉMETTRE L’APPEL ===
+    /* === Reprise réseau/peer -> renégociation === */
+    sock.onLinkDown = (cid) {
+      if (_start == null) return;
+      _statusHint = 'Problème de connexion… Reconnexion en cours'.tr;
+      if (mounted) setState(() {});
+      _showBanner('Problème de connexion chez ${widget.name}'.tr, Colors.orange);
+    };
+
+    sock.onLinkUp = (cid) async {
+      if (_start == null) return;
+      _peerOnline = true;
+      _statusHint = 'Connexion rétablie'.tr;
+      if (mounted) setState(() {});
+      _showBanner('Connexion rétablie'.tr, Colors.greenAccent);
+      await _rtc.renegotiateAll();
+    };
+
+    sock.onPeerSuspended = (cid, uid) {
+      if (_isGroup) return;
+      if (uid != widget.recipientID) return;
+      _peerOnline = false;
+      _refreshLinkHealth(showBanner: true, force: true);
+    };
+
+    sock.onPeerResumed = (cid, uid) async {
+      if (_isGroup) return;
+      if (uid != widget.recipientID) return;
+      _peerOnline = true;
+      _statusHint = 'Connexion rétablie'.tr;
+      if (mounted) setState(() {});
+      _showBanner('Connexion rétablie'.tr, Colors.greenAccent);
+      await _rtc.renegotiateAll();
+    };
+
+    // listeners AVANT émission
+    sock.onPresenceUpdate = (uid, online, lastSeen) {
+      if (_isGroup) return;
+      final other = widget.recipientID;
+      if (uid != other) return;
+      if (_start == null) return;
+      final wasOnline = _peerOnline;
+      _peerOnline = online;
+      _refreshLinkHealth(showBanner: true, force: wasOnline != online);
+    };
+
     sock.onCallInitiated = (cid) {
       if (_callId == null && mounted) setState(() => _callId = cid);
     };
@@ -123,10 +207,12 @@ class _VideoCallScreenState extends State<VideoCallScreen>
         setState(() {
           _callId = cid;
           _start  = DateTime.now();
+          _statusHint = null;
         });
       }
 
-      // Marque "accepted" côté Android (A et B)
+      _sess.markAcceptedNow();
+
       if (!_nativeAcceptMarked) {
         _nativeAcceptMarked = true;
         final idToMark = (cid.isNotEmpty)
@@ -135,7 +221,6 @@ class _VideoCallScreenState extends State<VideoCallScreen>
         try { _platform.invokeMethod('ui_accept', {'callId': idToMark}); } catch (_) {}
       }
 
-      // 1-to-1 : relier les pairs (A en initiator, B en non-initiator)
       if (!_isGroup) {
         _rtc.addPeer(widget.recipientID, widget.name, initiator: widget.isCaller);
       }
@@ -149,7 +234,6 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       _fallbackTimeout?.cancel();
       CallSounds.stopRingBack();
 
-      // Marque "rejected" pour éviter les "missed" parasites
       if (!_nativeRejectMarked) {
         _nativeRejectMarked = true;
         final idToMark = _callId ?? widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
@@ -166,6 +250,8 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       _showBanner('Occupé'.tr, Colors.red);
       _finishAfterBeep(() => CallSounds.playBusyOnce());
       _log(CallStatus.rejected);
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallEnded = () {
@@ -176,36 +262,41 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       _showBanner('Appel terminé'.tr, Colors.white70);
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.ended, endedAt: DateTime.now());
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallCancelled = () {
       if (_handledTerminal) return;
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
-      CallSounds.stopRingBack();
       _safePop();
       _log(CallStatus.cancelled);
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallError = (_) {
       if (_handledTerminal) return;
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
-      CallSounds.stopRingBack();
       _safePop();
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
     sock.onCallTimeout = () {
       if (_handledTerminal) return;
       _handledTerminal = true;
       _fallbackTimeout?.cancel();
-      CallSounds.stopRingBack();
       _showBanner('Ne répond pas'.tr, Colors.orange);
       _finishAfterBeep(() => CallSounds.playEndBeep());
       _log(CallStatus.timeout);
+
+      _sess.clearSession(disposeRtc: true); // 👈
     };
 
-    // === 2) DESTINATAIRE : préconfig (attend l’offer entrant)
+    // DESTINATAIRE : préconfig (attend l’offer entrant)
     if (!widget.isCaller && widget.existingCallId != null) {
       _callId = widget.existingCallId;
       if (!_isGroup) {
@@ -213,8 +304,8 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       }
     }
 
-    // === 3) APPELANT : émettre l’appel APRÈS avoir posé les listeners
-    if (widget.isCaller && !_sent) {
+    // APPELANT : émettre APRÈS listeners (pas en restauration)
+    if (widget.isCaller && !_sent && !widget.isRestored) {
       _sent = true;
       CallSounds.playRingBack();
 
@@ -234,7 +325,6 @@ class _VideoCallScreenState extends State<VideoCallScreen>
         _finishAfterBeep(() => CallSounds.playEndBeep());
         _log(CallStatus.timeout);
 
-        // Annuler côté serveur pour fermer l’écran chez B
         try {
           final s = Get.find<UserController>().socketService;
           if (_callId != null) {
@@ -246,50 +336,92 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       });
     }
 
-    // === 4) destinataire auto-accept (depuis notif plein écran)
+    // destinataire auto-accept
     if (!widget.isCaller && widget.shouldSendLocalAccept && !_acceptSent) {
       _acceptSent = true;
       final idToAccept = widget.existingCallId ?? '${widget.userId}_${_isGroup ? "group" : widget.recipientID}';
 
-      // Marque "accepted" immédiatement côté Android
       try { _platform.invokeMethod('ui_accept', {'callId': idToAccept}); } catch (_) {}
-
       sock.acceptCall(idToAccept, widget.userId);
     }
 
-    // Haut-parleur selon l’état initial
     rtc.Helper.setSpeakerphoneOn(_speakerOn);
 
+    // ⏱ Ticker: chrono + santé vidéo
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_start != null && mounted) setState(() {});
+      if (!mounted) return;
+      if (_start != null) setState(() {});
+      _evaluateVideoHealth();
     });
   }
 
   @override
   void dispose() {
     _ticker.cancel();
-    _fallbackTimeout?.cancel();
-    CallSounds.stopRingBack();
-    rtc.Helper.setSpeakerphoneOn(false);
 
-    // n’émettre endCall qu’en cas de raccrochage local et si pas déjà envoyé
-    if (_locallyEnded && _callId != null && !_endSignaled) {
-      try { Get.find<UserController>().socketService.endCall(_callId!); } catch (_) {}
+    final keepMedia = _sess.isOngoing.value &&
+                      _sess.isMinimized.value &&
+                      _sess.rtc == _rtc;
+
+    if (!keepMedia) {
+      _fallbackTimeout?.cancel();
+      CallSounds.stopRingBack();
+      rtc.Helper.setSpeakerphoneOn(false);
+
+      if (_locallyEnded && _callId != null && !_endSignaled) {
+        try { Get.find<UserController>().socketService.endCall(_callId!); } catch (_) {}
+      }
+
+      _rtc.leave();
     }
 
-    _rtc.leave();
     _anim.dispose();
     super.dispose();
   }
 
-  /* ───────────── pop sûr (évite le crash GetX/snackbar) ───────────── */
   void _safePop() {
     if (!mounted) return;
     final nav = Navigator.of(context, rootNavigator: true);
-    if (nav.canPop()) {
-      nav.pop();
+    if (nav.canPop()) nav.pop();
+  }
+
+  /* ───────────────────── Santé média & bannières ───────────────────── */
+
+  void _evaluateVideoHealth() {
+    final others = _rtc.participants.where((p) => p.id != 'self').toList();
+    final hasRemoteVideo = others.any((p) => p.stream != null);
+
+    final wasHealthy = _videoHealthy;
+    _videoHealthy = hasRemoteVideo;
+
+    if (_start == null) return;
+
+    if (wasHealthy != _videoHealthy) {
+      _refreshLinkHealth(showBanner: true, force: true);
+    } else {
+      _refreshLinkHealth(showBanner: false);
     }
   }
+
+  void _refreshLinkHealth({required bool showBanner, bool force = false}) {
+    final wasDown = _linkDown;
+    _linkDown = !(_peerOnline && _videoHealthy);
+
+    if (!force && wasDown == _linkDown) return;
+
+    if (_linkDown) {
+      _linkDownSince ??= DateTime.now();
+      _statusHint = 'Problème de connexion… Reconnexion en cours'.tr;
+      if (showBanner) _showBanner('Problème de connexion chez ${widget.name}'.tr, Colors.orange);
+    } else {
+      _linkDownSince = null;
+      _statusHint = 'Connexion rétablie'.tr;
+      if (showBanner) _showBanner('Connexion rétablie'.tr, Colors.greenAccent);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /* ───────────────────── UI helpers ───────────────────── */
 
   void _toggle() => setState(() => _show = !_show);
 
@@ -360,78 +492,107 @@ class _VideoCallScreenState extends State<VideoCallScreen>
 
   @override
   Widget build(BuildContext ctx) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: _toggle,
-        child: Stack(children: [
+    return WillPopScope(
+      onWillPop: () async {
+        // ↩️ BACK système → minimiser (pas de flèche retour)
+        _sess.minimizeAndHideUI(context);
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: GestureDetector(
+          onTap: _toggle,
+          child: Stack(children: [
 
-          /* flux vidéo */
-          Positioned.fill(
-            child: Obx(() {
-              final others = _rtc.participants.where((p) => p.id != 'self').toList();
+            /* flux vidéo */
+            Positioned.fill(
+              child: Obx(() {
+                final others = _rtc.participants.where((p) => p.id != 'self').toList();
 
-              // 1-to-1 : plein écran
-              if (!_isGroup) {
-                final r = others.isNotEmpty ? others.first : null;
-                return VideoTile(
-                  id: r?.id ?? widget.recipientID,
-                  name: r?.displayName ?? widget.name,
-                  stream: r?.stream,
-                  isSelf: false,
-                );
-              }
+                if (!_isGroup) {
+                  final r = others.isNotEmpty ? others.first : null;
+                  return VideoTile(
+                    id: r?.id ?? widget.recipientID,
+                    name: r?.displayName ?? widget.name,
+                    stream: r?.stream,
+                    isSelf: false,
+                  );
+                }
 
-              // Groupe : grille
-              return _buildGroupLayout(others);
-            }),
-          ),
+                return _buildGroupLayout(others);
+              }),
+            ),
 
-          /* PiP local */
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 300),
-            top: _show ? 60 : 20,
-            right: _show ? 20 : 10,
-            child: _pip(),
-          ),
+            /* PiP local */
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              top: _show ? 60 : 20,
+              right: _show ? 20 : 10,
+              child: _pip(),
+            ),
 
-          /* infos */
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 300),
-            top: _show ? 60 : 30,
-            left: 0,
-            right: 0,
-            child: AnimatedOpacity(
-              opacity: _show ? 1 : 0,
-              duration: const Duration(milliseconds: 200),
-              child: Column(
-                children: [
-                  Text(widget.name,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text(_fmt(),
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 16)),
-                ],
+            /* infos */
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              top: _show ? 60 : 30,
+              left: 0,
+              right: 0,
+              child: AnimatedOpacity(
+                opacity: _show ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: Column(
+                  children: [
+                    Text(widget.name,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Text(_fmt(),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 16)),
+                  ],
+                ),
               ),
             ),
-          ),
 
-          /* boutons */
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 300),
-            bottom: _show ? 40 : -100,
-            left: 0,
-            right: 0,
-            child: ScaleTransition(
-              scale: _scale,
-              child: _controls(),
+            /* badge état réseau/média */
+            if (_start != null && _statusHint != null)
+              Positioned(
+                left: 16, right: 16, bottom: 110,
+                child: Center(
+                  child: AnimatedOpacity(
+                    opacity: 1,
+                    duration: const Duration(milliseconds: 250),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        _statusHint!,
+                        style: const TextStyle(color: Colors.white70, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+            /* boutons */
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 300),
+              bottom: _show ? 40 : -100,
+              left: 0,
+              right: 0,
+              child: ScaleTransition(
+                scale: _scale,
+                child: _controls(),
+              ),
             ),
-          ),
-        ]),
+          ]),
+        ),
       ),
     );
   }
@@ -564,7 +725,7 @@ class _VideoCallScreenState extends State<VideoCallScreen>
               _rtc.toggleMic();
             }),
             _btn(Iconsax.rotate_left, () {
-              // TODO : switch caméra (front/back) si besoin
+              // TODO : switch caméra si besoin
             }),
             _btn(_speakerOn ? Iconsax.speaker : Iconsax.speaker4, () {
               setState(() => _speakerOn = !_speakerOn);
@@ -585,7 +746,6 @@ class _VideoCallScreenState extends State<VideoCallScreen>
     _fallbackTimeout?.cancel();
     CallSounds.stopRingBack();
 
-    // marque la fin locale et bloque les prochains events terminaux
     _locallyEnded    = true;
     _handledTerminal = true;
 
@@ -601,9 +761,11 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       _log(CallStatus.ended, endedAt: DateTime.now());
       if (_callId != null) {
         sock.endCall(_callId!);
-        _endSignaled = true; // évite second endCall en dispose
+        _endSignaled = true;
       }
     }
+
+    _sess.clearSession(disposeRtc: true); // 👈
     _safePop();
   }
 

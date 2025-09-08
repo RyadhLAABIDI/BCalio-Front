@@ -47,6 +47,9 @@ import 'widgets/chat/chat_room/video_call_screen.dart';
 /* ---- Journal d’appel ---- */
 import 'controllers/call_log_controller.dart';
 
+/* ✅ nouveau: session d’appel globale (mini-barre + restore) */
+import 'controllers/call_session_controller.dart';
+
 final navigatorKey = GlobalKey<NavigatorState>();
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -149,6 +152,25 @@ Future<void> _requestAVPermissions() async {
 
   debugPrint('[PERM] camera=${statuses[Permission.camera]} '
       'micro=${statuses[Permission.microphone]}');
+}
+
+/* ↓↓↓ AJOUT: fonction pour permissions Photos/Vidéos/Storage (galerie) */
+Future<void> _requestMediaPermissions() async {
+  // NB: permission_handler mappe:
+  // - iOS: Permission.photos
+  // - Android 13+: photos = READ_MEDIA_IMAGES, videos = READ_MEDIA_VIDEO
+  // - Android <13: storage
+  final statuses = await [
+    Permission.photos,
+    Permission.videos,
+    Permission.storage,
+  ].request();
+
+  debugPrint(
+    '[PERM] photos=${statuses[Permission.photos]} '
+    'videos=${statuses[Permission.videos]} '
+    'storage=${statuses[Permission.storage]}',
+  );
 }
 
 /* ---------- canaux natifs ---------- */
@@ -434,7 +456,6 @@ void _bindSocketIncomingHandlers() {
   sock.onIncomingCall = (callId, callerId, callerName, callType) async {
     debugPrint('[Socket][GLOBAL] incoming-call $callerId ($callType) id=$callId');
 
-    // ⛔ filtre mort/stale
     if (await _isCallDeadNative(callId)) {
       debugPrint('[Socket] drop stale/dead call $callId');
       return;
@@ -576,7 +597,6 @@ Future<void> _doNavigateToIncoming(Map<String, dynamic> a) async {
     final callId = (a['callId'] ?? '').toString();
     final callType = (a['callType'] ?? 'audio').toString();
 
-    // ⛔ vérifie côté natif avant toute UI
     if (await _isCallDeadNative(callId)) {
       debugPrint('[incoming_call] ignored dead/stale call $callId');
       return;
@@ -635,6 +655,8 @@ Future<void> _doNavigateToIncoming(Map<String, dynamic> a) async {
                   existingCallId: callId,
                   isGroup: isGroup,
                   memberIds: members,
+                  // ⭐ garantit le démarrage local côté B quand on auto-accept
+                  shouldSendLocalAccept: true,
                 )
               : AudioCallScreen(
                   name: callerName,
@@ -646,6 +668,8 @@ Future<void> _doNavigateToIncoming(Map<String, dynamic> a) async {
                   existingCallId: callId,
                   isGroup: isGroup,
                   memberIds: members,
+                  // ⭐ idem pour l’audio (fix du bug 00:00)
+                  shouldSendLocalAccept: true,
                 ),
           fullscreenDialog: true,
         ),
@@ -701,7 +725,8 @@ void main() async {
     ..put(ConversationApiService())
     ..put(MessageApiService())
     ..put(NotificationController())
-    ..put(CallLogController(), permanent: true);
+    ..put(CallLogController(), permanent: true)
+    ..put(CallSessionController(), permanent: true); // ✅ session d’appel globale
 
   /* ---------- BIND GLOBAL AVANT CONNEXION SOCKET ---------- */
   _bindSocketIncomingHandlers();
@@ -718,7 +743,6 @@ void main() async {
     onDidReceiveNotificationResponse: _onNotifTap,
   );
 
-  // cas “l’app a été lancée via une notif locale (payload)”
   final launchDetails =
       await flutterLocalNotificationsPlugin.getNotificationAppLaunchDetails();
   if ((launchDetails?.didNotificationLaunchApp ?? false) &&
@@ -733,16 +757,18 @@ void main() async {
   await Get.find<NotificationController>().requestNotificationPermission();
   await Get.find<ContactController>().requestContactsPermission();
   await _requestAVPermissions();
+  await _requestMediaPermissions(); // ←← AJOUT : galerie/vidéo au démarrage
 
   /* ---------- prefs & choix de route initiale ---------- */
   final prefs = await SharedPreferences.getInstance();
   final userToken   = prefs.getString('token') ?? '';
   final isFirstTime = prefs.getBool('isFirstTime') ?? true;
 
-  // si token présent → on va DIRECT sur la navigation principale
+  // ⬇️⬇️ NOUVEAU: si c’est la première fois, on ouvre l’écran langue.
+  // Sinon on conserve ton flow existant.
   final String initialRoute = userToken.isNotEmpty
       ? Routes.navigationScreen
-      : (isFirstTime ? Routes.start : Routes.login);
+      : (isFirstTime ? Routes.languageOnboarding : Routes.login);
 
   /* ---------- auto-connexion socket si déjà loggé ---------- */
   final uid = prefs.getString('userId') ?? '';
@@ -752,7 +778,6 @@ void main() async {
     sock.connectAndRegister(uid, name);
   }
 
-  // ❌ Ne pas enregistrer le handler background Flutter sur Android
   // FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
   WidgetsBinding.instance.addPostFrameCallback((_) => _drainPendingIncoming());
@@ -824,7 +849,7 @@ Future<void> _onNotifTap(NotificationResponse resp) async {
 /*                              APP                                   */
 /* ------------------------------------------------------------------ */
 class MyApp extends StatelessWidget {
-  final String initialRoute; // ⬅️ nouveau : on passe la route choisie
+  final String initialRoute;
   MyApp({super.key, required this.initialRoute});
 
   final ThemeController themeCtrl = Get.find<ThemeController>();
@@ -843,8 +868,81 @@ class MyApp extends StatelessWidget {
           darkTheme: AppThemes.darkTheme,
           themeMode: themeCtrl.themeMode.value,
           getPages: Routes.routes,
-          initialRoute: initialRoute, // ⬅️ ici
-          builder: (_, child) => child ?? const SizedBox.shrink(),
+          initialRoute: initialRoute,
+          // ✅ Overlay global de la mini-barre d’appel
+          builder: (_, child) {
+            final sess = Get.find<CallSessionController>();
+            return Stack(
+              children: [
+                child ?? const SizedBox.shrink(),
+                Obx(() {
+                  final show = sess.isOngoing.value && sess.isMinimized.value;
+                  return show ? const _GlobalInCallBar() : const SizedBox.shrink();
+                }),
+              ],
+            );
+          },
         ));
+  }
+}
+
+/* ================== BARRE GLOBALE "APPEL EN COURS" (compacte) ================== */
+class _GlobalInCallBar extends StatelessWidget {
+  const _GlobalInCallBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final sess = Get.find<CallSessionController>();
+    return SafeArea(
+      bottom: false,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => sess.restoreCallUI(), // ✅ rouvre SANS ré-émettre
+              child: Container(
+                height: 44, // 👈 COMPACT façon app-bar
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF21C07A), Color(0xFF12B886)],
+                  ),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.call, color: Colors.white, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Obx(() {
+                        final titleName = sess.name.value.trim();
+                        final left = 'Appel en cours';
+                        final mid  = titleName.isEmpty ? '' : ' — $titleName';
+                        final right = ' • ${sess.elapsed.value}';
+                        return Text(
+                          '$left$mid$right',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        );
+                      }),
+                    ),
+                    const Icon(Icons.keyboard_arrow_up_rounded,
+                        color: Colors.white, size: 22),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

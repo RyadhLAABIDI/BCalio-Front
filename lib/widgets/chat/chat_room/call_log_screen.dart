@@ -85,14 +85,16 @@ class _CallLogScreenState extends State<CallLogScreen> {
         ),
       ),
       body: Container(
+        // ✅ Fond UNI en dark, gradient en light
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: isDark
-                ? [kDarkBgColor, const Color(0xFF11151C)]
-                : [kLightBgColor, const Color(0xFFFFFFFF)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
+          color: isDark ? kDarkBgColor : null,
+          gradient: isDark
+              ? null
+              : LinearGradient(
+                  colors: [kLightBgColor, const Color(0xFFFFFFFF)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
         ),
         child: SafeArea(
           top: false,
@@ -313,27 +315,33 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 🎯 Couleurs demandées :
+    // - Light mode : kAccentColor
+    // - Dark mode  : kDarkPrimaryColor
+    final Color base = isDark ? kDarkPrimaryColor : kLightPrimaryColor;
+
     return Center(
       child: Padding(
         padding: EdgeInsets.fromLTRB(24, topPadding, 24, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Iconsax.call_slash, size: 56, color: theme.disabledColor),
+            Icon(Iconsax.call_slash, size: 56, color: base),
             const SizedBox(height: 16),
             Text(
               'Aucun appel pour le moment.'.tr,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: base,
+                  ),
             ),
             const SizedBox(height: 6),
             Text(
               'Les appels récents apparaîtront ici.'.tr,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.textTheme.bodyMedium?.color?.withOpacity(.7),
-              ),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: base,
+                  ),
               textAlign: TextAlign.center,
             ),
           ],

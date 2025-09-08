@@ -2,7 +2,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
-import 'package:collection/collection.dart'; // pour firstWhereOrNull
+import 'package:collection/collection.dart'; // firstWhereOrNull
 
 import 'socket_service.dart';
 import '../models/participant.dart';
@@ -36,6 +36,13 @@ class WebRTCController extends GetxController {
   late String         _selfId;
   rtc.MediaStream?    _local;
   final _peers = HashMap<String, rtc.RTCPeerConnection>(); // remoteId → pc
+
+  // Perfect negotiation
+  final _makingOffer = <String, bool>{};
+  final _polite      = <String, bool>{}; // callee = polite, caller = impolite
+
+  // Anti-rafale renégo
+  bool _renoBusy = false;
 
   /* ───────────────────────── INIT ───────────────────────── */
   @override
@@ -79,16 +86,28 @@ class WebRTCController extends GetxController {
   }
 
   void leave() {
-    _local?.dispose();
+    // Stoppe & libère tout proprement
+    try {
+      for (final t in _local?.getTracks() ?? const []) {
+        try { t.stop(); } catch (_) {}
+      }
+    } catch (_) {}
+    try { _local?.dispose(); } catch (_) {}
+    _local = null; // 👈 important : empêche toute réutilisation
+
     for (final p in participants) {
       p.renderer.srcObject = null;
-      p.renderer.dispose();
+      try { p.renderer.dispose(); } catch (_) {}
     }
+
     for (final pc in _peers.values) {
       try { pc.close(); } catch (_) {}
     }
     _peers.clear();
     participants.clear();
+
+    _makingOffer.clear();
+    _polite.clear();
   }
 
   /* ───────────────────── MULTI-PEER (mesh) ───────────────────── */
@@ -137,6 +156,9 @@ class WebRTCController extends GetxController {
     final pc = await _createPC(remoteId, initiator: initiator);
     _peers[remoteId] = pc;
 
+    // caller = impolite, callee = polite
+    _polite[remoteId] = !initiator;
+
     final remote = Participant(id: remoteId, displayName: remoteName);
     await remote.renderer.initialize();
     participants.add(remote);
@@ -145,7 +167,7 @@ class WebRTCController extends GetxController {
 
     if (initiator) {
       await _ensureLocalTracks(pc);
-      final offer = await pc.createOffer();
+      final offer = await _safeCreateOffer(pc, remoteId);
       await pc.setLocalDescription(offer);
       _sock.emitOffer(remoteId, offer.toMap());
       debugPrint('[RTC] → OFFER to $remoteId');
@@ -157,8 +179,7 @@ class WebRTCController extends GetxController {
     String remoteId, {
     required bool initiator,
   }) async {
-    // Force TURN pour valider en 3G/4G/5G (met à false plus tard pour revenir à 'all').
-    const bool forceRelay=false;
+    const bool forceRelay = false;
 
     final pc = await rtc.createPeerConnection({
       'iceServers': [
@@ -210,39 +231,109 @@ class WebRTCController extends GetxController {
     pc.onConnectionState = (s) {
       debugPrint('[RTC] PC[$remoteId] = $s');
       if (s == rtc.RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        pc.restartIce();
+        try { pc.restartIce(); } catch (_) {}
       }
     };
 
     return pc;
   }
 
+  /* ───── Tracks locales: réacquérir si null + replaceTrack si besoin ───── */
   Future<void> _ensureLocalTracks(rtc.RTCPeerConnection pc) async {
-    if (_local == null) return;
+    // 👇 Ré-acquiert si on a été libéré par un précédent leave()
+    if (_local == null) {
+      _local = await rtc.navigator.mediaDevices.getUserMedia({
+        'audio': true,
+        'video': withVideo ? {'facingMode': 'user'} : false,
+      });
 
-    final kindsAlready = (await pc.getSenders())
-        .map((s) => s.track?.kind)
-        .whereType<String>()
-        .toSet();
-
-    for (final track in _local!.getTracks()) {
-      if (!kindsAlready.contains(track.kind)) {
-        await pc.addTrack(track, _local!);
+      // rattache/assure le participant self
+      var self = participants.firstWhereOrNull((p) => p.id == 'self');
+      if (self == null) {
+        self = Participant(id: 'self', displayName: selfName);
+        await self.renderer.initialize();
+        participants.add(self);
       }
+      self.stream = _local;
+      self.renderer.srcObject = _local;
+      participants.refresh();
+    }
+
+    final senders = await pc.getSenders();
+    final haveAudio = senders.any((s) => s.track?.kind == 'audio');
+    final haveVideo = senders.any((s) => s.track?.kind == 'video');
+
+    final localAudio = _local!.getAudioTracks().firstOrNull;
+    final localVideo = withVideo ? _local!.getVideoTracks().firstOrNull : null;
+
+    for (final s in senders) {
+      if (s.track?.kind == 'audio' && localAudio != null && s.track?.id != localAudio.id) {
+        await s.replaceTrack(localAudio);
+      }
+      if (s.track?.kind == 'video' && localVideo != null && s.track?.id != localVideo.id) {
+        await s.replaceTrack(localVideo);
+      }
+    }
+
+    if (!haveAudio && localAudio != null) {
+      await pc.addTrack(localAudio, _local!);
+    }
+    if (withVideo && !haveVideo && localVideo != null) {
+      await pc.addTrack(localVideo, _local!);
+    }
+
+    // Optionnel : forcer SendRecv
+    try {
+      final transceivers = await pc.getTransceivers();
+      for (final t in transceivers) {
+        try { await (t as dynamic).setDirection(rtc.TransceiverDirection.SendRecv); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  /* ─────────────────── Offer sûre (marqueur makingOffer) ─────────────────── */
+  Future<rtc.RTCSessionDescription> _safeCreateOffer(
+    rtc.RTCPeerConnection pc,
+    String remoteId, { Map<String, dynamic>? options }
+  ) async {
+    _makingOffer[remoteId] = true;
+    try {
+      return await pc.createOffer(options ?? <String, dynamic>{});
+    } finally {
+      _makingOffer[remoteId] = false;
     }
   }
 
   /* ───────────────────── SIGNALISATION handlers ───────────────────── */
+
+  // Perfect negotiation (anti-glare)
   Future<void> _onOffer(String from, Map s) async {
     debugPrint('[RTC] ← OFFER from $from');
+
     if (!_peers.containsKey(from)) {
       await addPeer(from, from, initiator: false);
     }
     final pc = _peers[from]!;
-    await pc.setRemoteDescription(
-      rtc.RTCSessionDescription(s['sdp'], s['type'].toString().toLowerCase()),
-    );
+
+    final making   = _makingOffer[from] == true;
+    final stable   = pc.signalingState == rtc.RTCSignalingState.RTCSignalingStateStable;
+    final collision = making || !stable;
+    final polite   = _polite[from] ?? true;
+
+    if (collision && !polite) {
+      debugPrint('[RTC] glare: ignore offer from $from (impolite)');
+      return;
+    }
+
+    if (collision && polite) {
+      try {
+        await pc.setLocalDescription(rtc.RTCSessionDescription('', 'rollback'));
+      } catch (_) {}
+    }
+
+    await pc.setRemoteDescription(rtc.RTCSessionDescription(s['sdp'], 'offer'));
     await _ensureLocalTracks(pc);
+
     final answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     _sock.emitAnswer(from, answer.toMap());
@@ -253,9 +344,13 @@ class WebRTCController extends GetxController {
     debugPrint('[RTC] ← ANSWER from $from');
     final pc = _peers[from];
     if (pc == null) return;
-    await pc.setRemoteDescription(
-      rtc.RTCSessionDescription(s['sdp'], s['type'].toString().toLowerCase()),
-    );
+
+    final state = pc.signalingState;
+    if (state != rtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+      return; // hors séquence, ignorer
+    }
+
+    await pc.setRemoteDescription(rtc.RTCSessionDescription(s['sdp'], 'answer'));
   }
 
   Future<void> _onIce(String from, Map c) async {
@@ -264,5 +359,37 @@ class WebRTCController extends GetxController {
     await pc.addCandidate(
       rtc.RTCIceCandidate(c['candidate'], c['sdpMid'], c['sdpMLineIndex']),
     );
+  }
+
+  /* ─────────── Renégo à la reprise (ICE restart + anti-rafale) ─────────── */
+  Future<void> renegotiateAll() async {
+    if (_renoBusy) return; // anti-rafale
+    _renoBusy = true;
+    try {
+      for (final entry in _peers.entries) {
+        final remoteId = entry.key;
+        final pc = entry.value;
+
+        try {
+          await _ensureLocalTracks(pc);
+
+          try { await pc.restartIce(); } catch (_) {}
+
+          final offer = await _safeCreateOffer(pc, remoteId, options: {
+            'iceRestart': true,
+            'offerToReceiveAudio': 1,
+            'offerToReceiveVideo': withVideo ? 1 : 0,
+          });
+
+          await pc.setLocalDescription(offer);
+          _sock.emitOffer(remoteId, offer.toMap());
+          debugPrint('[RTC] renegotiate → OFFER (iceRestart) to $remoteId');
+        } catch (e) {
+          debugPrint('[RTC] renegotiate $remoteId error: $e');
+        }
+      }
+    } finally {
+      Future.delayed(const Duration(milliseconds: 500), () => _renoBusy = false);
+    }
   }
 }

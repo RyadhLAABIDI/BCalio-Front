@@ -13,22 +13,20 @@ import 'package:record/record.dart';
 import '../models/true_message_model.dart';
 import '../services/ai_chabot_service.dart';
 import '../services/message_api_service.dart';
-import '../services/push_api_service.dart'; // 👈 NEW (push)
+import '../services/push_api_service.dart';
 import '../controllers/user_controller.dart';
 import 'conversation_controller.dart';
 
 class ChatRoomController extends GetxController {
   final MessageApiService messageApiService;
   final AIChatbotService aiChatbotService = AIChatbotService();
-  final ConversationController conversationController =
-      Get.find<ConversationController>();
+  final ConversationController conversationController = Get.find<ConversationController>();
 
   ChatRoomController({required this.messageApiService});
 
-  // 👇 NEW: client pour déclencher la push côté serveur d’appels
   final PushApiService _pushApi = PushApiService();
 
-  /* --------------------- ÉTAT MESSAGES --------------------- */
+  // ----- état -----
   RxList<Message> messages = <Message>[].obs;
   RxBool isLoading = false.obs;
   RxBool isRecording = false.obs;
@@ -39,13 +37,12 @@ class ChatRoomController extends GetxController {
   Timer? _pollingTimer;
   Function? onMessagesUpdated;
 
-  // --- Anti-doublon / upsert ---
   final Set<String> _seenServerIds = <String>{};
 
   void _dedupeInPlace() {
     final map = <String, Message>{};
     for (final m in messages) {
-      map[m.id] = m; // garde la dernière instance par id
+      map[m.id] = m;
     }
     messages.value = map.values.toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -61,7 +58,6 @@ class ChatRoomController extends GetxController {
     _seenServerIds.add(m.id);
   }
 
-  // Remplace un "local-*" si corps/timestamp match, sinon upsert par id
   void _upsertFromServer(Message server) {
     if (_seenServerIds.contains(server.id)) {
       final i = messages.indexWhere((x) => x.id == server.id);
@@ -83,28 +79,21 @@ class ChatRoomController extends GetxController {
     _upsertById(server);
   }
 
-  /* --------------------- TYPING INDICATOR --------------------- */
-  // Conversation courante (à attacher depuis la page)
+  // ----- typing indicator -----
   String _currentConversationId = '';
   String _otherUserId = '';
-  bool get _isConversationAttached =>
-      _currentConversationId.isNotEmpty && _otherUserId.isNotEmpty;
+  bool get _isConversationAttached => _currentConversationId.isNotEmpty && _otherUserId.isNotEmpty;
 
-  // “l’autre est en train d’écrire” → à afficher dans l’UI
   final RxBool otherTyping = false.obs;
 
-  // Anti-spam émission typing
-  Timer? _typingIdleTimer; // relâche automatique après inactivité
-  bool _typingActiveSent = false; // on a déjà envoyé “typing” (évite le spam)
+  Timer? _typingIdleTimer;
+  bool _typingActiveSent = false;
   DateTime _lastKeystroke = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// Appeler UNE FOIS dans ChatRoomPage :
-  void attachConversation(
-      {required String conversationId, required String otherUserId}) {
+  void attachConversation({required String conversationId, required String otherUserId}) {
     _currentConversationId = conversationId;
     _otherUserId = otherUserId;
 
-    // écoute des events socket (typing) -> filtre sur la conv courante
     final socket = Get.find<UserController>().socketService;
     socket.onTyping = (convId, fromUserId) {
       if (convId == _currentConversationId && fromUserId == _otherUserId) {
@@ -118,7 +107,6 @@ class ChatRoomController extends GetxController {
     };
   }
 
-  /// À brancher sur le TextField.onChanged
   void handleTyping({required String text}) {
     if (!_isConversationAttached) return;
 
@@ -126,24 +114,18 @@ class ChatRoomController extends GetxController {
     final now = DateTime.now();
     _lastKeystroke = now;
 
-    // Si l’utilisateur commence à taper et qu’on n’a pas encore notifié → envoyer 1 fois
     if (text.trim().isNotEmpty && !_typingActiveSent) {
       _typingActiveSent = true;
       socket.emitTyping(_otherUserId, _currentConversationId);
     }
 
-    // Re-déclenche le timer d’inactivité (stop-typing après X ms sans saisie)
     _typingIdleTimer?.cancel();
     if (text.trim().isEmpty) {
-      // si champ vide → stop immédiat
       _sendStopTyping();
     } else {
       _typingIdleTimer = Timer(const Duration(seconds: 2), () {
-        final inactiveMs =
-            DateTime.now().difference(_lastKeystroke).inMilliseconds;
-        if (inactiveMs >= 1800) {
-          _sendStopTyping();
-        }
+        final inactiveMs = DateTime.now().difference(_lastKeystroke).inMilliseconds;
+        if (inactiveMs >= 1800) _sendStopTyping();
       });
     }
   }
@@ -158,9 +140,8 @@ class ChatRoomController extends GetxController {
     _typingIdleTimer = null;
   }
 
-  /* --------------------- FETCH/POLLING --------------------- */
+  // ----- fetch / polling -----
   Future<void> fetchMessages(String token, String conversationId) async {
-    debugPrint('fetchMessages ======================= chat room=');
     isLoading.value = true;
     try {
       final fetched = await messageApiService.getMessages(token, conversationId);
@@ -174,9 +155,7 @@ class ChatRoomController extends GetxController {
       if (fetched.isNotEmpty) {
         lastFetchedMessageId.value = fetched.last.id;
       }
-      debugPrint('isSeen+++++++++++++++++++++++++++++');
     } catch (e) {
-      // ⚠️ retiré: Get.snackbar('Error', 'Failed to fetch messages: $e');
       debugPrint('Failed to fetch messages: $e');
     } finally {
       isLoading.value = false;
@@ -184,13 +163,11 @@ class ChatRoomController extends GetxController {
   }
 
   void startPolling(String token, String conversationId) {
-    debugPrint('start polling ======================= chat room=');
     _pollingTimer?.cancel();
 
     _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       try {
-        final fetched =
-            await messageApiService.getMessages(token, conversationId);
+        final fetched = await messageApiService.getMessages(token, conversationId);
 
         for (final msg in fetched) {
           final i = messages.indexWhere((m) => m.id == msg.id);
@@ -200,27 +177,26 @@ class ChatRoomController extends GetxController {
             final newSeen = msg.seenBy?.length ?? 0;
             if (newSeen > oldSeen ||
                 msg.createdAt != old.createdAt ||
-                msg.body != old.body) {
+                msg.body != old.body ||
+                msg.image != old.image ||
+                msg.audio != old.audio ||
+                msg.video != old.video) {
               messages[i] = msg;
             }
             _seenServerIds.add(msg.id);
             continue;
           }
-
           _upsertFromServer(msg);
         }
 
         _dedupeInPlace();
       } catch (e) {
-        debugPrint('Polling error------: $e');
+        debugPrint('Polling error: $e');
         if (e.toString().contains('404')) {
           _pollingTimer?.cancel();
         } else if (e.toString().contains('401')) {
           _pollingTimer?.cancel();
           Get.offAllNamed(Routes.login);
-        } else {
-          // ⚠️ retiré: Get.snackbar('Error', 'Failed to fetch messages: $e');
-          debugPrint('Failed to fetch messages (polling): $e');
         }
       }
     });
@@ -234,9 +210,7 @@ class ChatRoomController extends GetxController {
   void onInit() {
     super.onInit();
     messages.listen((_) {
-      if (onMessagesUpdated != null) {
-        onMessagesUpdated!();
-      }
+      if (onMessagesUpdated != null) onMessagesUpdated!();
     });
   }
 
@@ -245,26 +219,21 @@ class ChatRoomController extends GetxController {
     _sendStopTyping();
     _typingIdleTimer?.cancel();
     _typingIdleTimer = null;
-
     stopPolling();
     super.onClose();
   }
 
-  /* --------------------- ENVOIS --------------------- */
-
-  /// =================== SEND TEXT (optimistic) ===================
+  // ----- envois -----
   Future<void> sendMessage({
     required String token,
     required String conversationId,
     required String body,
   }) async {
     if (token.isEmpty || conversationId.isEmpty || body.isEmpty) {
-      Get.snackbar(
-          'Error', 'Token, Conversation ID, and Body cannot be empty.');
+      Get.snackbar('Error', 'Token, Conversation ID, and Body cannot be empty.');
       return;
     }
 
-    // 1) insertion optimiste
     final userCtrl = Get.find<UserController>();
     final currentUserId = userCtrl.currentUser.value?.id ?? '';
     final tempId = 'local-${DateTime.now().millisecondsSinceEpoch}';
@@ -278,14 +247,12 @@ class ChatRoomController extends GetxController {
     messages.add(optimistic);
 
     try {
-      // 2) envoi serveur
       final sent = await messageApiService.sendMessage(
         token: token,
         conversationId: conversationId,
         body: body,
       );
 
-      // 3) remplacer l’optimiste par la vraie version (ID serveur)
       final idx = messages.indexWhere((m) => m.id == tempId);
       if (idx != -1) {
         messages[idx] = sent;
@@ -295,7 +262,6 @@ class ChatRoomController extends GetxController {
       _seenServerIds.add(sent.id);
       _dedupeInPlace();
 
-      // 4) 🔔 Push "chat_message"
       await _notifyPush(
         conversationId: conversationId,
         sent: sent,
@@ -304,15 +270,14 @@ class ChatRoomController extends GetxController {
       );
 
       sendingStatus.value = '';
-      _sendStopTyping(); // coupe l’indicateur de saisie
+      _sendStopTyping();
     } catch (e) {
-      // 5) échec → petite étiquette “[failed]” locale
       final idx = messages.indexWhere((m) => m.id == tempId);
       if (idx != -1) {
         messages[idx] = Message(
           id: tempId,
           senderId: currentUserId,
-          body: '${body}  ❌',
+          body: '$body  ❌',
           createdAt: optimistic.createdAt,
           conversationId: conversationId,
         );
@@ -322,7 +287,6 @@ class ChatRoomController extends GetxController {
     }
   }
 
-  /// Send Image Message
   Future<void> sendImage({
     required String token,
     required String conversationId,
@@ -334,9 +298,7 @@ class ChatRoomController extends GetxController {
     }
 
     try {
-      final imageUrl =
-          await messageApiService.uploadFileToCloudinary(imageFile, false);
-
+      final imageUrl = await messageApiService.uploadFileToCloudinary(imageFile, false);
       if (imageUrl.isEmpty) {
         sendingStatus.value = '';
         Get.snackbar('Error', 'Image upload failed.');
@@ -349,12 +311,11 @@ class ChatRoomController extends GetxController {
         image: imageUrl,
       );
 
-      // 🔔 Push
       await _notifyPush(
         conversationId: conversationId,
         sent: sent,
         contentType: 'image',
-        textForPush: imageUrl, // Android natif peut tenter BigPicture
+        textForPush: imageUrl,
       );
 
       sendingStatus.value = '';
@@ -365,7 +326,6 @@ class ChatRoomController extends GetxController {
     }
   }
 
-  /// Send Voice Message
   Future<void> sendVoiceMessage({
     required String token,
     required String conversationId,
@@ -375,11 +335,8 @@ class ChatRoomController extends GetxController {
       Get.snackbar('Error', 'Token and Conversation ID cannot be empty.');
       return;
     }
-    debugPrint('sendVoiceMessage====================================: $voiceFile');
     try {
-      final audioUrl =
-          await messageApiService.uploadFileToCloudinary(voiceFile, true);
-
+      final audioUrl = await messageApiService.uploadFileToCloudinary(voiceFile, true);
       if (audioUrl.isEmpty) {
         sendingStatus.value = '';
         Get.snackbar('Error', 'Audio upload failed.');
@@ -392,7 +349,6 @@ class ChatRoomController extends GetxController {
         audio: audioUrl,
       );
 
-      // 🔔 Push
       await _notifyPush(
         conversationId: conversationId,
         sent: sent,
@@ -408,39 +364,31 @@ class ChatRoomController extends GetxController {
     }
   }
 
-  /// Send Video Message
   Future<void> sendVideo({
     required String token,
     required String conversationId,
     required File videoFile,
   }) async {
     if (token.isEmpty || conversationId.isEmpty) {
-      Get.snackbar(
-          'Error', 'Token, Conversation ID, and Body cannot be empty.');
+      Get.snackbar('Error', 'Token, Conversation ID, and Body cannot be empty.');
       return;
     }
-    debugPrint('sendVideo====================================: $videoFile');
     try {
-      final videoUrl =
-          await messageApiService.uploadFileToCloudinary(videoFile, false);
-      debugPrint(
-          'sendVideo=====videoUrl===============================: $videoUrl');
-
+      final videoUrl = await messageApiService.uploadFileToCloudinary(videoFile, false);
       if (videoUrl.isEmpty) {
         sendingStatus.value = '';
         Get.snackbar('Error', 'Video upload failed.');
         return;
       }
-      debugPrint(
-          'video+++++++++++++++sendMessage+===============================: $videoUrl');
 
+      // Fallback utile: on met aussi l’URL dans body sous forme de balise
       final sent = await messageApiService.sendMessage(
         token: token,
         conversationId: conversationId,
-        video: videoUrl, // ✅ champ "video" géré côté service
+        video: videoUrl,
+        body: '[video] $videoUrl',
       );
 
-      // 🔔 Push
       await _notifyPush(
         conversationId: conversationId,
         sent: sent,
@@ -456,18 +404,15 @@ class ChatRoomController extends GetxController {
     }
   }
 
-  /* --------------------- PICKER / PERMISSIONS --------------------- */
+  // ----- Picker / permissions -----
   final picker = ImagePicker();
   File pictureClient = File("");
   final PermissionService permissionService = PermissionService();
 
   Future<void> getImageFromGallery(BuildContext context) async {
-    final permissionStatus =
-        await permissionService.requestStoragePermission();
-    debugPrint('permissionStatus---------------: $permissionStatus');
+    final permissionStatus = await permissionService.requestStoragePermission();
     if (permissionStatus == true) {
       final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
       if (pickedFile != null) {
         pictureClient = File(pickedFile.path);
         update();
@@ -476,9 +421,7 @@ class ChatRoomController extends GetxController {
   }
 
   Future<void> getImageFromCamera(BuildContext context) async {
-    final permissionStatus =
-        await permissionService.requestCameraPermission();
-    debugPrint('getImageFromCamera---------------: $permissionStatus');
+    final permissionStatus = await permissionService.requestCameraPermission();
     if (permissionStatus == true) {
       final pickedFile = await picker.pickImage(source: ImageSource.camera);
       if (pickedFile != null) {
@@ -512,20 +455,15 @@ class ChatRoomController extends GetxController {
     );
   }
 
-  Future<void> deleteMessage(
-      String conversationId, String messageid, String token) async {
+  Future<void> deleteMessage(String conversationId, String messageid, String token) async {
     try {
-      debugPrint(
-          'deleteMessage========================: $messageid  conv Id: $conversationId token: $token');
       await messageApiService.deleteMessage(conversationId, messageid, token);
     } catch (e) {
       debugPrint('Error Failed to delete message: $e');
     }
   }
 
-  /* --------------------- Recording --------------------- */
-
-  /// Lance l’enregistrement vocal (AAC LC .m4a dans le dossier temporaire)
+  // ----- Recording -----
   Future<void> startRecording() async {
     try {
       final hasPerm = await record.hasPermission();
@@ -535,8 +473,7 @@ class ChatRoomController extends GetxController {
       }
 
       final tmpDir = await getTemporaryDirectory();
-      final path =
-          '${tmpDir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path = '${tmpDir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
       await record.start(
         const RecordConfig(
@@ -550,14 +487,12 @@ class ChatRoomController extends GetxController {
 
       isRecording.value = true;
       recordingFilePath.value = path;
-      debugPrint('[Record] started → $path');
     } catch (e) {
       debugPrint('[Record] start error: $e');
       Get.snackbar('Error', 'Cannot start recording: $e');
     }
   }
 
-  /// Arrête l’enregistrement et envoie le fichier
   Future<void> stopRecording({
     required String token,
     required String conversationId,
@@ -566,27 +501,18 @@ class ChatRoomController extends GetxController {
       final path = await record.stop();
       isRecording.value = false;
 
-      if (path == null || path.isEmpty) {
-        debugPrint('[Record] stop → no file');
-        return;
-      }
+      if (path == null || path.isEmpty) return;
 
       final file = File(path);
-      if (!file.existsSync()) {
-        debugPrint('[Record] file does not exist: $path');
-        return;
-      }
+      if (!file.existsSync()) return;
 
-      // Envoi comme message vocal
       await sendVoiceMessage(
         token: token,
         conversationId: conversationId,
         voiceFile: file,
       );
 
-      // Reset chemin
       recordingFilePath.value = '';
-      debugPrint('[Record] sent voice message: $path');
     } catch (e) {
       isRecording.value = false;
       debugPrint('[Record] stop error: $e');
@@ -594,7 +520,6 @@ class ChatRoomController extends GetxController {
     }
   }
 
-  /// Annule l’enregistrement (stop + suppression fichier si présent)
   Future<void> discardRecording() async {
     try {
       if (await record.isRecording()) {
@@ -609,13 +534,12 @@ class ChatRoomController extends GetxController {
       }
       isRecording.value = false;
       recordingFilePath.value = '';
-      debugPrint('[Record] discarded');
     } catch (e) {
       debugPrint('[Record] discard error: $e');
     }
   }
 
-  /* --------------------- AI --------------------- */
+  // ----- AI -----
   Future<void> sendAIChatbotMessage({
     required String token,
     required String conversationId,
@@ -638,23 +562,45 @@ class ChatRoomController extends GetxController {
     }
   }
 
-  /* --------------------- PUSH helper --------------------- */
+  // ----- PDF / DOC -----
+  Future<String?> uploadPdfAndGetUrl(File pdf) async {
+    try {
+      final url = await messageApiService.uploadDocumentToCloudinary(pdf);
+      if (url.isEmpty) return null;
+      return url;
+    } catch (e) {
+      debugPrint('[PDF] upload error: $e');
+      return null;
+    }
+  }
 
-  /// Déclenche la push “chat_message” vers les autres membres de la conversation.
+  Future<void> sendDocument({
+    required String token,
+    required String conversationId,
+    required File file,
+  }) async {
+    final url = await uploadPdfAndGetUrl(file);
+    if (url == null) {
+      Get.snackbar('Error', 'Document upload failed.');
+      return;
+    }
+    final fileName = file.path.split(Platform.pathSeparator).last;
+    final body = '[file] $fileName|$url';
+    await sendMessage(token: token, conversationId: conversationId, body: body);
+  }
+
+  // ----- PUSH helper -----
   Future<void> _notifyPush({
     required String conversationId,
     required Message sent,
     required String contentType, // "text" | "image" | "audio" | "video"
-    required String textForPush, // texte ou URL (image/audio/video)
+    required String textForPush, // texte ou URL
   }) async {
     try {
       final convCtrl = conversationController;
       final userCtrl = Get.find<UserController>();
 
-      // trouve la conv en mémoire
-      final conv = convCtrl.conversations.firstWhereOrNull(
-        (c) => c.id == conversationId,
-      );
+      final conv = convCtrl.conversations.firstWhereOrNull((c) => c.id == conversationId);
       if (conv == null) {
         debugPrint('[push] conversation not in cache, skip notify');
         return;
@@ -662,16 +608,11 @@ class ChatRoomController extends GetxController {
 
       final myId = userCtrl.userId;
       final toUserIds = <String>{
-        // d’abord via users (objets)
         ...conv.users.map((u) => u.id),
-        // fallback via userIds (strings)
         ...conv.userIds,
       }.where((id) => id.isNotEmpty && id != myId).toList();
 
-      if (toUserIds.isEmpty) {
-        debugPrint('[push] no recipients to notify');
-        return;
-      }
+      if (toUserIds.isEmpty) return;
 
       final fromName = userCtrl.userName;
       final avatarUrl = userCtrl.user?.image ?? '';
@@ -686,10 +627,9 @@ class ChatRoomController extends GetxController {
         text: textForPush,
         contentType: contentType,
         isGroup: toUserIds.length > 1,
-        sentAtIso: (sent.createdAt).toUtc().toIso8601String(),
+        sentAtIso: sent.createdAt.toUtc().toIso8601String(), // ✅ createdAt
       );
     } catch (e) {
-      // On ne bloque pas l’UI si la push échoue, l’envoi du message est prioritaire
       debugPrint('[push] notifyNewMessage error: $e');
     }
   }

@@ -297,6 +297,20 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
     }
   }
 
+  /* ──────────────── PULL-TO-REFRESH (nouveau) ──────────────── */
+
+  Future<void> _refreshContacts() async {
+    try {
+      // recharge depuis API (inclut les nouveaux contacts ajoutés/scan)
+      await contactController.fetchContactsFromApiPhone();
+      await _dedupeAndPersist();
+      // (optionnel) haptics léger si tu veux du “tactile”:
+      // HapticFeedback.lightImpact();
+    } catch (e) {
+      debugPrint('refresh error: $e');
+    }
+  }
+
   /* ───────────────── UI ───────────────── */
 
   @override
@@ -315,7 +329,7 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
               const SizedBox(height: 16),
               CustomSearchBar(
                 controller: searchController,
-                hintText: "Recherchez un contact ou sélectionnez-en un dans la liste ci-dessous."
+                hintText: "Search for a contact or select one from the list below."
                     .tr,
                 onChanged: (query) async {
                   if (query.isEmpty || query.trim().isEmpty) {
@@ -376,7 +390,24 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
                   final uniqueAll = _uniqueByIdOrPhone(contactController.contacts);
 
                   if (uniqueAll.isEmpty) {
-                    return NoSearchFound(message: "Aucun contact trouvé.".tr);
+                    // On garde une ScrollView pour permettre le pull même à vide
+                    return RefreshIndicator(
+                      onRefresh: _refreshContacts,
+                      color: theme.colorScheme.primary,
+                      backgroundColor: theme.colorScheme.surface,
+                      strokeWidth: 2.4,
+                      displacement: 24,
+                      triggerMode: RefreshIndicatorTriggerMode.onEdge,
+                      child: ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(
+                            height: MediaQuery.of(context).size.height * 0.25,
+                          ),
+                          Center(child: NoSearchFound(message: "Aucun contact trouvé.".tr)),
+                        ],
+                      ),
+                    );
                   }
 
                   final appContacts =
@@ -384,18 +415,29 @@ class _AllContactsScreenState extends State<AllContactsScreen> {
                   final phoneContacts =
                       uniqueAll.where((c) => c.isPhoneContact).toList();
 
-                  return ListView(
-                    children: [
-                      if (appContacts.isNotEmpty) ...[
-                        _buildSectionHeader("Contacts enregistrés".tr),
-                        ...appContacts.map(_buildContactTile).toList(),
+                  // ⬇️ PULL-TO-REFRESH autour de la liste
+                  return RefreshIndicator(
+                    onRefresh: _refreshContacts,
+                    color: theme.colorScheme.primary,
+                    backgroundColor: theme.colorScheme.surface,
+                    strokeWidth: 2.4,
+                    displacement: 24,
+                    triggerMode: RefreshIndicatorTriggerMode.onEdge,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        if (appContacts.isNotEmpty) ...[
+                          _buildSectionHeader("Contacts enregistrés".tr),
+                          ...appContacts.map(_buildContactTile).toList(),
+                        ],
+                        if (appContacts.isNotEmpty && phoneContacts.isNotEmpty)
+                          _buildSectionDivider("Contacts non enregistrés".tr),
+                        if (phoneContacts.isNotEmpty) ...[
+                          ...phoneContacts.map(_buildContactTile).toList(),
+                        ],
+                        const SizedBox(height: 12),
                       ],
-                      if (appContacts.isNotEmpty && phoneContacts.isNotEmpty)
-                        _buildSectionDivider("Contacts non enregistrés".tr),
-                      if (phoneContacts.isNotEmpty) ...[
-                        ...phoneContacts.map(_buildContactTile).toList(),
-                      ],
-                    ],
+                    ),
                   );
                 }),
               ),

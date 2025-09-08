@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math; // 👈 pour l’écartement circulaire
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -72,6 +73,40 @@ class _MapScreenState extends State<MapScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadAndDisplay());
+  }
+
+  /* ===== Helpers “anti-collisions” ===== */
+
+  // Conversion m -> degrés latitude
+  double _mToLat(double m) => m / 111320.0;
+
+  // Conversion m -> degrés longitude (corrigée par la latitude)
+  double _mToLng(double m, double atLatDeg) =>
+      m / (111320.0 * math.cos(atLatDeg * math.pi / 180));
+
+  /// Écarte n points autour d’un centre sur un cercle de rayon [radiusM] mètres
+  List<LatLng> _scatterAround(LatLng center, int n, {double radiusM = 20}) {
+    if (n <= 1) return [center];
+    final List<LatLng> out = [];
+    // si beaucoup de personnes, augmente légèrement le rayon
+    final r = radiusM * (n >= 7 ? 1.6 : n >= 4 ? 1.3 : 1.0);
+    final step = 2 * math.pi / n;
+    for (int i = 0; i < n; i++) {
+      final ang = i * step;
+      final dx = r * math.cos(ang);
+      final dy = r * math.sin(ang);
+      out.add(LatLng(
+        center.latitude  + _mToLat(dy),
+        center.longitude + _mToLng(dx, center.latitude),
+      ));
+    }
+    return out;
+  }
+
+  /// Regroupe par coord (arrondies) pour détecter les “mêmes places”
+  String _coordKey(double lat, double lng) {
+    // 6 décimales ~ 0.11 m — suffisant pour considérer “identique”
+    return '${lat.toStringAsFixed(6)},${lng.toStringAsFixed(6)}';
   }
 
   Future<void> _loadAndDisplay() async {
@@ -149,86 +184,105 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
 
-      // Marqueurs contacts
+      /* ====== Marqueurs contacts AVEC anti-collision ====== */
+
+      // 1) parser en LatLng + grouper par coord arrondies
+      final Map<String, List<Map<String, dynamic>>> groups = {};
       for (final loc in contacts) {
         final lat = double.tryParse(loc['latitude'].toString());
         final lng = double.tryParse(loc['longitude'].toString());
-        final cid    = (loc['id']    ?? '').toString(); // ← pour les appels
-        final cname  = (loc['name']  ?? '').toString();
-        final cimage = (loc['image'] ?? '').toString();
-        final cemail = (loc['email'] ?? '').toString();
-        final cphone = (loc['phone'] ?? '').toString();
-
         if (lat == null || lng == null) continue;
+        final key = _coordKey(lat, lng);
+        (groups[key] ??= []).add({
+          ...loc,
+          '_lat': lat,
+          '_lng': lng,
+        });
+      }
 
-        final point = LatLng(lat, lng);
+      // 2) pour chaque groupe, disperse autour du centre si plusieurs
+      for (final entry in groups.entries) {
+        final usersAtSameSpot = entry.value;
+        final first = usersAtSameSpot.first;
+        final center = LatLng(first['_lat'] as double, first['_lng'] as double);
 
-        built.add(
-          Marker(
-            width: 100,
-            height: 100,
-            point: point,
-            child: GestureDetector(
-              onTap: () async {
-                // Itinéraire + pill avec noms + distance/durée
-                await _showRouteTo(point, cname);
-              },
-              onDoubleTap: () {
-                // Fiche contact (double-tap) + actions d’appel
-                showModalBottomSheet(
-                  context: context,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  ),
-                  builder: (_) => _buildContactDetailsBottomSheet(
-                    id: cid,
-                    name: cname,
-                    image: cimage,
-                    email: cemail,
-                    phone: cphone,
-                  ),
-                ).whenComplete(() {
-                  setState(() {
-                    _polylines.clear();
-                    _routeInfo = null; // masque la pill
-                  });
-                  _fitAllSafe();
-                });
-              },
-              child: Column(
-                children: [
-                  cimage.isNotEmpty
-                      ? CircleAvatar(radius: 15, backgroundImage: NetworkImage(cimage))
-                      : const Icon(Icons.person_pin_circle, color: Colors.red, size: 40),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
-                      borderRadius: BorderRadius.circular(6),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.6),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+        final positions = _scatterAround(center, usersAtSameSpot.length, radiusM: 20);
+
+        for (int i = 0; i < usersAtSameSpot.length; i++) {
+          final loc = usersAtSameSpot[i];
+          final point = positions[i];
+
+          final cid    = (loc['id']    ?? '').toString();
+          final cname  = (loc['name']  ?? '').toString();
+          final cimage = (loc['image'] ?? '').toString();
+          final cemail = (loc['email'] ?? '').toString();
+          final cphone = (loc['phone'] ?? '').toString();
+
+          built.add(
+            Marker(
+              width: 100,
+              height: 100,
+              point: point,
+              child: GestureDetector(
+                onTap: () async {
+                  await _showRouteTo(point, cname);
+                },
+                onDoubleTap: () {
+                  showModalBottomSheet(
+                    context: context,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                     ),
-                    child: Text(
-                      cname,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.black,
-                        fontWeight: FontWeight.w600,
+                    builder: (_) => _buildContactDetailsBottomSheet(
+                      id: cid,
+                      name: cname,
+                      image: cimage,
+                      email: cemail,
+                      phone: cphone,
+                    ),
+                  ).whenComplete(() {
+                    setState(() {
+                      _polylines.clear();
+                      _routeInfo = null;
+                    });
+                    _fitAllSafe();
+                  });
+                },
+                child: Column(
+                  children: [
+                    cimage.isNotEmpty
+                        ? CircleAvatar(radius: 15, backgroundImage: NetworkImage(cimage))
+                        : const Icon(Icons.person_pin_circle, color: Colors.red, size: 40),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.grey.withOpacity(0.6),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        cname,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.black,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
+          );
+        }
       }
 
       if (!mounted) return;
@@ -238,8 +292,6 @@ class _MapScreenState extends State<MapScreen> {
           ..addAll(built);
         isLoading = false;
       });
-
-      // ⛔️ SnackBar d'aide supprimé ici (aucun autre changement)
 
       _fitAllSafe();
     } catch (e) {
@@ -413,7 +465,7 @@ class _MapScreenState extends State<MapScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: LinearGradient(
-                        colors: [Colors.deepPurpleAccent, Colors.blueAccent.shade200],
+                        colors: [Colors.deepPurpleAccent, Colors.blueAccent],
                       ),
                     ),
                     child: const Icon(Icons.route, color: Colors.white, size: 18),
@@ -486,6 +538,9 @@ class _MapScreenState extends State<MapScreen> {
           userAgentPackageName: 'com.elite.bcalio.app',
         ),
         if (_polylines.isNotEmpty) PolylineLayer(polylines: _polylines),
+
+        // ✅ On garde le clustering, mais comme on a écarté les doublons,
+        // ils s’affichent chacun avec avatar + nom même “au même endroit”.
         MarkerClusterLayerWidget(
           options: MarkerClusterLayerOptions(
             markers: _markers,

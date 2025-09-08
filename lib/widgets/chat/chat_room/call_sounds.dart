@@ -8,17 +8,20 @@ import 'package:just_audio/just_audio.dart';
 /// ➋  Occupé (busy)              → assets/busy_tone.mp3 (1x)
 /// ➌  Fin d’appel (bip court)    → assets/call_end.mp3 (1x)
 /// ➍  Sonnerie entrante (dest.)  → Android natif via MethodChannel, sinon fallback MP3
+/// ➎  **NOUVEAU**: Ton de reconnexion → assets/reconnect_tone.mp3 (boucle)
 class CallSounds {
   CallSounds._();
 
   /* players */
-  static final _ringPlayer   = AudioPlayer();
-  static final _busyPlayer   = AudioPlayer();
-  static final _endPlayer    = AudioPlayer();
-  static final _incomingPlayer = AudioPlayer();
+  static final _ringPlayer      = AudioPlayer();
+  static final _busyPlayer      = AudioPlayer();
+  static final _endPlayer       = AudioPlayer();
+  static final _incomingPlayer  = AudioPlayer();
+  static final _reconnectPlayer = AudioPlayer(); // NEW
 
   static bool _ringOn = false;
   static bool _incomingOn = false;
+  static bool _reconnectOn = false; // NEW
 
   /* ======================= RING-BACK (APPELANT) ======================= */
   static Future<void> playRingBack() async {
@@ -90,5 +93,25 @@ class CallSounds {
     }
 
     try { await _incomingPlayer.stop(); } catch (_) {}
+  }
+
+  /* ======================= NEW: TON DE RECONNEXION ======================= */
+  static Future<void> playReconnectLoop() async {
+    if (_reconnectOn) return;
+    _reconnectOn = true;
+    try {
+      await _reconnectPlayer.stop();
+      await _reconnectPlayer.setLoopMode(LoopMode.one);
+      await _reconnectPlayer.setAsset('assets/reconnect.mp3'); // ⇐ ajouter ce fichier
+      await _reconnectPlayer.play();
+    } catch (_) {
+      _reconnectOn = false;
+    }
+  }
+
+  static Future<void> stopReconnectLoop() async {
+    if (!_reconnectOn) return;
+    _reconnectOn = false;
+    try { await _reconnectPlayer.stop(); } catch (_) {}
   }
 }

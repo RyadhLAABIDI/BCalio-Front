@@ -14,7 +14,7 @@ import 'package:flutter/widgets.dart' show WidgetsBinding;
 class SocketService {
   static SocketService? _instance;
 
-  factory SocketService({String baseUrl = 'https://backendcall.b-callio.com'}) {
+  factory SocketService({String baseUrl = 'http://192.168.1.22:1906'}) {
     return _instance ??= SocketService._internal(baseUrl);
   }
   SocketService._internal(this.baseUrl);
@@ -29,6 +29,7 @@ class SocketService {
 
   bool _isConnecting = false;
   String? _registeredUserId;
+  bool _didRegisterOnceAfterConnect = false; // 👈 évite "registered" multiples
 
   String get userId   => _userId;
   String get socketId => _socketId;
@@ -44,6 +45,19 @@ class SocketService {
     _pendingActions.clear();
     for (final a in copy) {
       try { a(); } catch (e) { debugPrint('[Socket] pending action error: $e'); }
+    }
+  }
+
+  /// ===== Helpers d’émission différée (NOUVEAU) =====
+  bool get _isRegisteredReady =>
+      isConnected && _registeredUserId != null && _registeredUserId == _userId && _socket != null;
+
+  void _signalOrQueue(VoidCallback send) {
+    if (_isRegisteredReady) {
+      try { send(); } catch (e) { debugPrint('[Socket] signal send error: $e'); }
+    } else {
+      // Rejoué automatiquement au moment du 'registered' via _flushPendingActions()
+      _queue(() => _signalOrQueue(send));
     }
   }
 
@@ -81,6 +95,12 @@ class SocketService {
   void Function(String conversationId, String fromUserId)? onTyping;
   void Function(String conversationId, String fromUserId)? onStopTyping;
 
+  // NEW: callbacks de résilience réseau
+  void Function(String callId)? onLinkDown;   // notre socket a sauté pendant l’appel
+  void Function(String callId)? onLinkUp;     // reprise ok
+  void Function(String callId, String userId)? onPeerSuspended; // l'autre a un pb de connexion
+  void Function(String callId, String userId)? onPeerResumed;   // l'autre est revenu
+
   void disconnect() {
     _socket?.disconnect();
   }
@@ -116,7 +136,9 @@ class SocketService {
           final id = e['userId'] ?? e['id'] ?? e['uid'] ?? e['user_id'];
           final nm = e['name'] ?? e['displayName'] ?? e['username'] ?? '';
           out.add({'userId': id?.toString() ?? '', 'name': nm?.toString() ?? ''});
-        } else out.add({'userId': e.toString(), 'name': ''});
+        } else {
+          out.add({'userId': e.toString(), 'name': ''});
+        }
       }
       return out.where((m) => (m['userId'] ?? '').isNotEmpty).toList();
     }
@@ -135,6 +157,8 @@ class SocketService {
   }
 
   /* ------------------------ CONNECTION -------------------------- */
+  bool _linkDown = false; // NEW: flag interne
+
   void connectAndRegister(String userId, String name) {
     _userId = userId;
 
@@ -170,9 +194,16 @@ class SocketService {
           .build(),
     );
 
+    // reset le flag à chaque nouvelle socket
+    _didRegisterOnceAfterConnect = false;
+
     _socket!
       ..onConnect((_) {
-        debugPrint('[Socket] connected → register $userId ($name)');
+        debugPrint('[Socket] connected');
+        // ✅ évite d'émettre 'register' plusieurs fois sur des reconnects rapprochés
+        if (_didRegisterOnceAfterConnect) return;
+        _didRegisterOnceAfterConnect = true;
+        debugPrint('[Socket] → register $userId ($name)');
         _socket!.emit('register', {'userId': userId, 'name': name});
       })
       ..on('registered', (d) {
@@ -183,6 +214,13 @@ class SocketService {
         _nameById[userId] = name;
         _flushPendingActions();
         onRegistered?.call();
+
+        // NEW: si on était en appel, forcer la reprise côté serveur
+        if (_inCall && _activeCallId != null) {
+          try {
+            _socket!.emit('rejoin-call', {'callId': _activeCallId, 'userId': _userId});
+          } catch (_) {}
+        }
       })
       ..on('incoming-call', (d) {
         if (_inCall) return;
@@ -208,7 +246,7 @@ class SocketService {
           'type': type,
         };
 
-        // ⏱ Fallback local: si le serveur n’envoie pas d’event direct (room-only), on loggue manqué.
+        // ⏱ Fallback local
         _armLocalTimeout(callId);
 
         if (isGroup && onIncomingGroupCall != null) {
@@ -328,6 +366,24 @@ class SocketService {
           onParticipantTimeout?.call(callId, uid);
         }
       })
+      // NEW: réseau en reprise/suspension
+      ..on('participant-suspended', (d) {
+        final cid = _normId(d['callId']);
+        final uid = _normId(d['userId']);
+        if (cid.isNotEmpty && uid.isNotEmpty) onPeerSuspended?.call(cid, uid);
+      })
+      ..on('participant-resumed', (d) {
+        final cid = _normId(d['callId']);
+        final uid = _normId(d['userId']);
+        if (cid.isNotEmpty && uid.isNotEmpty) onPeerResumed?.call(cid, uid);
+      })
+      ..on('resume-ok', (d) {
+        final cid = _normId(d['callId']);
+        if (cid.isNotEmpty) {
+          _linkDown = false;
+          onLinkUp?.call(cid);
+        }
+      })
       ..on('presence-update', (d) {
         final uid = _normId(d['userId']);
         final online = d['online'] == true;
@@ -366,7 +422,15 @@ class SocketService {
         debugPrint('[Socket] disconnected');
         _isConnecting = false;
         _registeredUserId = null;
-        _resetFlags();
+        _didRegisterOnceAfterConnect = false; // 👈 reset, autorisera un seul register au prochain connect
+
+        if (_inCall && _activeCallId != null) {
+          // NE PAS reset l’appel; notifier l’UI qu’on est en tentative de reprise
+          _linkDown = true;
+          onLinkDown?.call(_activeCallId!);
+        } else {
+          _resetFlags();
+        }
         _socket = null;
       })
       ..connect();
@@ -526,16 +590,20 @@ class SocketService {
     _socket!.emit('set-visibility', {'visible': visible});
   }
 
+  // ====== ÉMISSIONS RTC (modifiées pour tamponner tant que non "registered") ======
   void emitOffer (String toUserId, Map sdp) =>
-      _socket?.emit('offer',  {'to': toUserId, 'sdp': sdp});
+      _signalOrQueue(() => _socket!.emit('offer',  {'to': toUserId, 'sdp': sdp}));
+
   void emitAnswer(String toUserId, Map sdp) =>
-      _socket?.emit('answer', {'to': toUserId, 'sdp': sdp});
+      _signalOrQueue(() => _socket!.emit('answer', {'to': toUserId, 'sdp': sdp}));
+
   void emitIce   (String toUserId, Map ice) =>
-      _socket?.emit('ice',    {'to': toUserId, 'ice': ice});
+      _signalOrQueue(() => _socket!.emit('ice',    {'to': toUserId, 'ice': ice}));
 
   void _resetFlags() {
     _inCall       = false;
     _activeCallId = null;
+    _linkDown     = false;
   }
 
   /* ------------------------ Fallback timer helpers ------------------------ */
@@ -623,6 +691,7 @@ class SocketService {
     _socketId = '';
     _registeredUserId = null;
     _isConnecting = false;
+    _didRegisterOnceAfterConnect = false;
     _pendingActions.clear();
     _resetFlags();
   }

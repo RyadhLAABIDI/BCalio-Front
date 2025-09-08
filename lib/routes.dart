@@ -17,6 +17,12 @@ import 'screens/settings/update_profile_screen.dart';
 import 'screens/qr/my_qr_screen.dart';
 import 'screens/qr/scan_qr_add_screen.dart';
 
+// ⬇️ Onboarding langue
+import 'screens/onboarding/language_onboarding_screen.dart';
+
+// ⬇️ Route Room (module)
+import 'modules/roomkit/room_screen.dart';
+
 class Routes {
   // Route Names
   static const String start = '/';
@@ -33,6 +39,12 @@ class Routes {
   static const String forgotPassword = '/forgotPasswordPage';
   static const String newPassword = '/newPasswordPage';
   static const String navigationScreen = '/navigationScreen';
+
+  // Onboarding langue
+  static const String languageOnboarding = '/onboarding/language';
+
+  // ⬇️ NOUVEAU : écran Room (on navigue avec arguments: room, name)
+  static const String room = '/room';
 
   // Pages
   static final routes = [
@@ -54,5 +66,15 @@ class Routes {
     GetPage(name: '/qr/scan', page: () => const ScanQrAddScreen()),
     GetPage(name: '/qr/web-scan', page: () => const QrWebScanScreen()),
 
+    GetPage(name: languageOnboarding, page: () => const LanguageOnboardingPage()),
+
+    // ⬇️ Route Room (utilise Get.arguments: {'room':..., 'name':...})
+    GetPage(
+      name: room,
+      page: () => RoomScreen(
+        roomId: Get.arguments['room'] as String,
+        displayName: Get.arguments['name'] as String,
+      ),
+    ),
   ];
 }

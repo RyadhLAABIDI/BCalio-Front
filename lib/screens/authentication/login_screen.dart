@@ -21,6 +21,9 @@ import '../../widgets/base_widget/input_field.dart';
 import '../../widgets/base_widget/otp_loading_indicator.dart';
 import '../../widgets/base_widget/primary_button.dart';
 
+// 🌐 Onboarding langues
+import 'package:bcalio/screens/onboarding/language_onboarding_screen.dart'; // <-- ajuste si besoin
+
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -51,7 +54,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     _createEmojis();
     loadRememberedCredentials();
 
-    // ⬇️ carrousel plus lent (toutes les 4 secondes)
     _carouselTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (_featureController.hasClients) {
         final currentPage = _featureController.page?.round() ?? 0;
@@ -151,6 +153,37 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     );
   }
 
+  // 🌐 ➜ Transition premium vers LanguageOnboardingPage
+  void _goToLanguage() {
+    Navigator.of(context).push(_fancyLanguageRoute(const LanguageOnboardingPage()));
+  }
+
+  PageRouteBuilder _fancyLanguageRoute(Widget page) {
+    return PageRouteBuilder(
+      transitionDuration: const Duration(milliseconds: 520),
+      reverseTransitionDuration: const Duration(milliseconds: 420),
+      pageBuilder: (context, anim, secondary) => page,
+      transitionsBuilder: (context, anim, secondary, child) {
+        final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+        return Stack(
+          children: [
+            FadeTransition(
+              opacity: Tween<double>(begin: 0.95, end: 1).animate(curved),
+              child: child,
+            ),
+            ScaleTransition(
+              scale: Tween<double>(begin: 0.96, end: 1.0).animate(curved),
+              child: SlideTransition(
+                position: Tween<Offset>(begin: const Offset(0, 0.06), end: Offset.zero).animate(curved),
+                child: child,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -165,7 +198,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       final isLoading = userController.isLoading.value;
       return Scaffold(
         backgroundColor: isDarkMode ? kDarkBgColor : kLightBgColor,
-        resizeToAvoidBottomInset: true, // évite l’overflow quand le clavier s’affiche
+        resizeToAvoidBottomInset: true,
         body: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -178,6 +211,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           ),
           child: Stack(
             children: [
+              // 1) fond emojis
               AnimatedBuilder(
                 animation: _waveController,
                 builder: (_, __) => CustomPaint(
@@ -189,6 +223,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                 ),
               ),
 
+              // 2) vague basse
               Positioned(
                 bottom: 0,
                 child: AnimatedBuilder(
@@ -210,16 +245,17 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                 ),
               ),
 
+              // 3) contenu principal
               SafeArea(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     return SingleChildScrollView(
-                      padding: const EdgeInsets.only(bottom: 24), // marge bas pour éviter tout débordement
+                      padding: const EdgeInsets.only(bottom: 24),
                       child: ConstrainedBox(
                         constraints: BoxConstraints(minHeight: constraints.maxHeight),
                         child: Column(
                           children: [
-                            // HEADER (hauteur adaptable)
+                            // HEADER
                             SizedBox(
                               height: headerHeight,
                               child: Center(
@@ -252,7 +288,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                               ),
                             ),
 
-                            // FORMULAIRE (plus de height fixe)
+                            // FORM
                             Container(
                               padding: const EdgeInsets.all(20),
                               margin: const EdgeInsets.symmetric(horizontal: 20),
@@ -273,7 +309,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                 ],
                               ),
                               child: Column(
-                                mainAxisSize: MainAxisSize.min, // ⬅️ important (évite les compressions internes)
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
                                   // Email
                                   Container(
@@ -329,7 +365,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
                                   const SizedBox(height: 14),
 
-                                  // Remember + Forgot (Wrap pour éviter overflow)
+                                  // Remember + Forgot
                                   Wrap(
                                     spacing: 12,
                                     runSpacing: 8,
@@ -415,7 +451,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
                                   const SizedBox(height: 10),
 
-                                  // Bouton Login (pas d’overflow grâce au scroll + marges)
+                                  // Bouton Login
                                   Container(
                                     decoration: BoxDecoration(
                                       gradient: LinearGradient(
@@ -458,66 +494,65 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
                             const SizedBox(height: 20),
 
-                            // FONCTIONNALITÉS : plus de conteneur à hauteur fixe → pas d’overflow
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                              child: Column(
-                                children: [
-                                  SizedBox(
-                                    height: pageViewHeight,
-                                    child: PageView(
-                                      controller: _featureController,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      children: const [
-                                        FeatureCard(
-                                          icon: Iconsax.shield_tick,
-                                          title: 'Secure Encryption',
-                                          description: 'All your data is end-to-end encrypted',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.cloud,
-                                          title: 'Cloud Sync',
-                                          description: 'Access your data from any device',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.bucket,
-                                          title: 'Lightning Fast',
-                                          description: 'Optimized for maximum performance',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.shield_tick,
-                                          title: 'Secure Encryption',
-                                          description: 'All your data is end-to-end encrypted',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.cloud,
-                                          title: 'Cloud Sync',
-                                          description: 'Access your data from any device',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.bucket,
-                                          title: 'Lightning Fast',
-                                          description: 'Optimized for maximum performance',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.shield_tick,
-                                          title: 'Secure Encryption',
-                                          description: 'All your data is end-to-end encrypted',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.cloud,
-                                          title: 'Cloud Sync',
-                                          description: 'Access your data from any device',
-                                        ),
-                                        FeatureCard(
-                                          icon: Iconsax.bucket,
-                                          title: 'Lightning Fast',
-                                          description: 'Optimized for maximum performance',
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-
+                          // FONCTIONNALITÉS
+Padding(
+  padding: const EdgeInsets.symmetric(horizontal: 12.0),
+  child: Column(
+    children: [
+      SizedBox(
+        height: pageViewHeight,
+        child: PageView(
+          controller: _featureController,
+          physics: const NeverScrollableScrollPhysics(),
+          children: [
+            FeatureCard(
+              icon: Iconsax.shield_tick,
+              title: 'Secure Encryption'.tr,
+              description: 'All your data is end-to-end encrypted'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.cloud,
+              title: 'Cloud Sync'.tr,
+              description: 'Access your data from any device'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.bucket,
+              title: 'Lightning Fast'.tr,
+              description: 'Optimized for maximum performance'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.shield_tick,
+              title: 'Secure Encryption'.tr,
+              description: 'All your data is end-to-end encrypted'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.cloud,
+              title: 'Cloud Sync'.tr,
+              description: 'Access your data from any device'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.bucket,
+              title: 'Lightning Fast'.tr,
+              description: 'Optimized for maximum performance'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.shield_tick,
+              title: 'Secure Encryption'.tr,
+              description: 'All your data is end-to-end encrypted'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.cloud,
+              title: 'Cloud Sync'.tr,
+              description: 'Access your data from any device'.tr,
+            ),
+            FeatureCard(
+              icon: Iconsax.bucket,
+              title: 'Lightning Fast'.tr,
+              description: 'Optimized for maximum performance'.tr,
+            ),
+          ],
+        ),
+      ),
                                   const SizedBox(height: 10),
 
                                   Center(
@@ -575,6 +610,21 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                 ),
               ),
 
+              // 4) 🌐 bouton langue + label — placé APRÈS SafeArea pour être AU-DESSUS
+              Positioned(
+                right: 16,
+                top: MediaQuery.of(context).padding.top + 10,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _LangBadgeButton(onTap: _goToLanguage),
+                    const SizedBox(height: 6),
+                    const _LangHintLabel(),
+                  ],
+                ),
+              ),
+
+              // 5) overlay chargement
               if (isLoading) const OtpLoadingIndicator(),
             ],
           ),
@@ -680,13 +730,13 @@ class FeatureCard extends StatelessWidget {
         border: Border.all(color: theme.colorScheme.outline.withOpacity(0.1)),
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min, // compact
+        mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, size: 24, color: theme.colorScheme.primary),
           const SizedBox(height: 8),
           Text(
-            title.tr, // ⬅️ traduit
+            title.tr,
             style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -695,7 +745,7 @@ class FeatureCard extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            description.tr, // ⬅️ traduit
+            description.tr,
             style: GoogleFonts.poppins(fontSize: 12, height: 1.25),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
@@ -703,6 +753,149 @@ class FeatureCard extends StatelessWidget {
             softWrap: true,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/* ==================== 🌐 Bouton Langue flottant ==================== */
+
+class _LangBadgeButton extends StatefulWidget {
+  final VoidCallback onTap;
+  const _LangBadgeButton({required this.onTap});
+
+  @override
+  State<_LangBadgeButton> createState() => _LangBadgeButtonState();
+}
+
+class _LangBadgeButtonState extends State<_LangBadgeButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _pulse;
+  late final Animation<Offset> _float;
+  bool _down = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
+    _pulse = Tween<double>(begin: 0.96, end: 1.04).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+    _float = Tween<Offset>(begin: const Offset(0, -0.02), end: const Offset(0, 0.02))
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+
+    return SlideTransition(
+      position: _float,
+      child: ScaleTransition(
+        scale: _pulse,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque, // capte mieux les taps
+          onTapDown: (_) => setState(() => _down = true),
+          onTapCancel: () => setState(() => _down = false),
+          onTapUp: (_) => setState(() => _down = false),
+          onTap: widget.onTap,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: accent.withOpacity(0.45), width: 1.2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withOpacity(_down ? 0.25 : 0.35),
+                      blurRadius: _down ? 10 : 16,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: const Text(
+                  '🌐', // emoji moderne & coloré
+                  style: TextStyle(fontSize: 22),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* ==================== ✨ Label animé sous l’icône ==================== */
+
+class _LangHintLabel extends StatefulWidget {
+  const _LangHintLabel();
+
+  @override
+  State<_LangHintLabel> createState() => _LangHintLabelState();
+}
+
+class _LangHintLabelState extends State<_LangHintLabel> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _fade;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat(reverse: true);
+    _fade  = Tween<double>(begin: 0.55, end: 1.0).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+    _slide = Tween<Offset>(begin: const Offset(0.0, -0.04), end: const Offset(0.0, 0.02))
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: accent.withOpacity(0.35)),
+                boxShadow: [
+                  BoxShadow(
+                    color: accent.withOpacity(0.22),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -112,6 +112,7 @@ dependencies:
   http: ^1.2.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^3.5.7
+  open_filex: ^4.4.0
   
   
  
@@ -154,9 +155,11 @@ flutter:
     - assets/chat_bg_dark.png
     - assets/chat_bg_light.png
     - assets/default_avatar.png
+    - assets/planets/jupiter.jpg
     - assets/ringback.mp3  
     - assets/busy_tone.mp3
     - assets/call_end.mp3
+    - assets/reconnect.mp3
     - assets/json/
     - assets/3d_icons/
     - assets/filters/

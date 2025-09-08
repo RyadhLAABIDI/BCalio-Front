@@ -1,39 +1,34 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:bcalio/routes.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloudinary/cloudinary.dart';
-import 'package:image/image.dart';
 import 'package:pdfx/pdfx.dart';
 
 import '../models/true_message_model.dart';
 import '../utils/misc.dart';
-import 'http_errors.dart'; // ⬅️ pour remonter 401
+import 'http_errors.dart';
 
 class MessageApiService {
   final cloudinary = Cloudinary.unsignedConfig(
-    cloudName: cloudName,
+    cloudName: cloudName, // défini dans utils/misc.dart
   );
 
-  /// Fetch Messages by Conversation
   Future<List<Message>> getMessages(String token, String conversationId) async {
     if (token.isEmpty || conversationId.isEmpty) {
       Get.toNamed(Routes.login);
       throw ArgumentError('Token and conversation ID cannot be empty');
     }
 
-    final url =
-        Uri.parse('$baseUrl/mobile/conversations/$conversationId/messages');
+    final url = Uri.parse('$baseUrl/mobile/conversations/$conversationId/messages');
     try {
-      final response = await http.get(
-        url,
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(url, headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final List<dynamic> messagesJson = json.decode(response.body);
@@ -50,7 +45,7 @@ class MessageApiService {
     }
   }
 
-  /// Send Message
+  /// Envoi message (texte / image / audio / vidéo)
   Future<Message> sendMessage({
     required String token,
     required String conversationId,
@@ -59,35 +54,20 @@ class MessageApiService {
     String? audio,
     String? video,
   }) async {
-    debugPrint('sendMsg=============================== $token=====: $video');
     if (token.isEmpty || conversationId.isEmpty) {
       Get.toNamed(Routes.login);
       throw ArgumentError('Token and conversation ID cannot be empty');
     }
 
     final url = Uri.parse('$baseUrl/mobile/messages');
-    final Map<String, dynamic> bodyPayload = {
-      'conversationId': conversationId,
-    };
-    debugPrint('bodyPayload====================================: $bodyPayload');
+    final Map<String, dynamic> payload = {'conversationId': conversationId};
 
-    if (body != null && body.isNotEmpty) {
-      bodyPayload['message'] = body;
-    }
-    if (image != null && image.isNotEmpty) {
-      bodyPayload['image'] = image;
-    }
-    if (audio != null && audio.isNotEmpty) {
-      bodyPayload['audio'] = audio;
-    }
-    if (video != null && video.isNotEmpty) {
-      debugPrint('video send api ============$video');
-      // ✅ envoyer la vidéo dans le champ "video"
-      bodyPayload['video'] = video;
-    }
+    if (body != null && body.isNotEmpty) payload['message'] = body; // backend attend "message"
+    if (image != null && image.isNotEmpty) payload['image'] = image;
+    if (audio != null && audio.isNotEmpty) payload['audio'] = audio;
+    if (video != null && video.isNotEmpty) payload['video'] = video;
 
     try {
-      debugPrint('json.encode(bodyPayload)========${json.encode(bodyPayload)}');
       final response = await http
           .post(
             url,
@@ -95,9 +75,9 @@ class MessageApiService {
               'Authorization': 'Bearer $token',
               'Content-Type': 'application/json',
             },
-            body: json.encode(bodyPayload),
+            body: json.encode(payload),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return Message.fromJson(json.decode(response.body));
@@ -113,159 +93,106 @@ class MessageApiService {
     }
   }
 
+  /// Upload (images / audio / vidéo / PDF→images)
+  /// Retourne des URLs séparées par un espace si plusieurs images (PDF->pages).
   Future<String> uploadFileToCloudinary(File file, bool isAudio) async {
-    debugPrint('isAudio====================$isAudio');
     try {
       final String extension = file.path.split('.').last.toLowerCase();
-      final List<String> imageUrls = []; // On stocke les URLs uploadées
+      final List<String> urls = [];
 
       if (extension == 'pdf') {
-        // Ouvrir le document PDF
         final pdf = await PdfDocument.openFile(file.path);
-
-        // Parcourir toutes les pages du PDF
         for (int i = 1; i <= pdf.pagesCount; i++) {
           final page = await pdf.getPage(i);
-
-          // Rendre la page en tant qu'image
-          final image = await page.render(
+          final rendered = await page.render(
             width: page.width,
             height: page.height,
-            format: PdfPageImageFormat.png, // Format de l'image
+            format: PdfPageImageFormat.png,
           );
+          if (rendered == null) throw Exception('Failed to render PDF page');
 
-          if (image != null) {
-            // Accéder aux données de l'image
-            final Uint8List pngBytes = image.bytes;
+          final tmp = File('${Directory.systemTemp.path}/temp_page_$i.png');
+          await tmp.writeAsBytes(Uint8List.fromList(rendered.bytes));
 
-            // Sauvegarder l'image dans un fichier temporaire
-            final tempFile =
-                File('${Directory.systemTemp.path}/temp_page_$i.png');
-            await tempFile.writeAsBytes(pngBytes);
-
-            debugPrint('Image saved to: ${tempFile.path}');
-
-            // Uploader l'image vers Cloudinary
-            final response = await cloudinary.unsignedUpload(
-              file: tempFile.path,
-              uploadPreset: uploadPreset,
-              resourceType: CloudinaryResourceType.image,
-              progressCallback: (count, total) {
-                debugPrint('Uploading file: $count/$total bytes');
-              },
-            );
-
-            if (response.isSuccessful) {
-              debugPrint('Upload image successful: ${response.secureUrl}');
-              imageUrls.add(response.secureUrl!);
-            } else {
-              throw Exception(
-                'Failed to upload file: ${response.error?.toString()}',
-              );
-            }
-          } else {
-            throw Exception('Failed to render PDF page to image');
-          }
-
-          // Fermer la page
+          final response = await cloudinary.unsignedUpload(
+            file: tmp.path,
+            uploadPreset: uploadPreset,
+            resourceType: CloudinaryResourceType.image,
+            progressCallback: (s, t) => debugPrint('Uploading image: $s/$t'),
+          );
+          if (!response.isSuccessful) throw Exception('Failed to upload image: ${response.error}');
+          urls.add(response.secureUrl!);
           await page.close();
         }
-
-        // Fermer le document PDF
         await pdf.close();
       } else if (['m4a', 'mp3', 'mp4'].contains(extension) && isAudio) {
-        // Uploader un fichier audio
-        debugPrint('Uploading audio file+++++++++++++++++++++++++++++++++++++++++++');
         final response = await cloudinary.unsignedUpload(
           file: file.path,
           uploadPreset: uploadPreset,
           resourceType: CloudinaryResourceType.raw,
-          folder: "audio",
-          progressCallback: (count, total) {
-            debugPrint('Uploading file: $count/$total bytes');
-          },
+          folder: 'audio',
+          progressCallback: (s, t) => debugPrint('Uploading audio: $s/$t'),
         );
-
-        if (response.isSuccessful) {
-          debugPrint('Upload successful: ${response.secureUrl}');
-          imageUrls.add(response.secureUrl!);
-        } else {
-          throw Exception(
-            'Failed to upload file: ${response.error?.toString()}',
-          );
-        }
-      } else if (['mp4', 'mov', 'avi', 'mkv'].contains(extension) && !isAudio) {
-        // Uploader un fichier vidéo
+        if (!response.isSuccessful) throw Exception('Audio upload failed: ${response.error}');
+        urls.add(response.secureUrl!);
+      } else if (['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(extension) && !isAudio) {
         final response = await cloudinary.unsignedUpload(
           file: file.path,
           uploadPreset: uploadPreset,
           resourceType: CloudinaryResourceType.video,
-          progressCallback: (count, total) {
-            debugPrint('Uploading file: $count/$total bytes');
-          },
+          progressCallback: (s, t) => debugPrint('Uploading video: $s/$t'),
         );
-
-        if (response.isSuccessful) {
-          debugPrint('Upload successful: ${response.secureUrl}');
-          imageUrls.add(response.secureUrl!);
-        } else {
-          throw Exception(
-            'Failed to upload file: ${response.error?.toString()}',
-          );
-        }
-      } else if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
-          .contains(extension)) {
-        // Uploader une image
+        if (!response.isSuccessful) throw Exception('Video upload failed: ${response.error}');
+        urls.add(response.secureUrl!);
+      } else if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].contains(extension)) {
         final response = await cloudinary.unsignedUpload(
           file: file.path,
           uploadPreset: uploadPreset,
           resourceType: CloudinaryResourceType.image,
-          progressCallback: (count, total) {
-            debugPrint('Uploading file: $count/$total bytes');
-          },
+          progressCallback: (s, t) => debugPrint('Uploading image: $s/$t'),
         );
-
-        if (response.isSuccessful) {
-          debugPrint('Upload successful: ${response.secureUrl}');
-          imageUrls.add(response.secureUrl!);
-        } else {
-          throw Exception(
-            'Failed to upload file: ${response.error?.toString()}',
-          );
-        }
+        if (!response.isSuccessful) throw Exception('Image upload failed: ${response.error}');
+        urls.add(response.secureUrl!);
       }
 
-      // Retourner les URLs séparées par un espace
-      return imageUrls.join(' ');
+      return urls.join(' ');
     } catch (e) {
       debugPrint('Cloudinary upload error: $e');
       throw Exception('Cloudinary upload error: $e');
     }
   }
 
-  Future<bool> deleteMessage(
-    String conversationId,
-    String messageId,
-    String token,
-  ) async {
+  /// Upload document (PDF/DOCX/...) en RAW → secure_url
+  Future<String> uploadDocumentToCloudinary(File file) async {
+    try {
+      final resp = await cloudinary.unsignedUpload(
+        file: file.path,
+        uploadPreset: uploadPreset,
+        resourceType: CloudinaryResourceType.raw,
+        folder: 'docs',
+        progressCallback: (s, t) => debugPrint('Uploading RAW: $s/$t'),
+      );
+      if (resp.isSuccessful) {
+        return resp.secureUrl ?? '';
+      }
+      debugPrint('Cloudinary RAW upload error: ${resp.error}');
+      return '';
+    } catch (e) {
+      debugPrint('Cloudinary RAW upload exception: $e');
+      return '';
+    }
+  }
+
+  Future<bool> deleteMessage(String conversationId, String messageId, String token) async {
     final url = Uri.parse('$baseUrl/mobile/messages');
     try {
-      debugPrint('deleteMessage=================mes ===$messageId');
-      debugPrint('deleteMessage====================$conversationId');
       final response = await http.delete(
         url,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: json.encode({
-          'conversationId': conversationId,
-          'messageId': messageId,
-        }),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        body: json.encode({'conversationId': conversationId, 'messageId': messageId}),
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        debugPrint('Message deleted successfully');
         return true;
       } else if (response.statusCode == 401) {
         throw UnauthorizedException(response.body);
